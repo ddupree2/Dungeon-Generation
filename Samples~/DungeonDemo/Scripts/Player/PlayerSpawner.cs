@@ -1,7 +1,7 @@
-using Code.Scripts.Attributes.Required;
+using StarStoneStudio.DungeonGeneration.Attributes;
 using UnityEngine;
 
-namespace Code.Scripts.Player
+namespace StarStoneStudio.DungeonGeneration.Samples
 {
     /// <summary>
     /// Handles the spawning and initialization of the player character within the scene.

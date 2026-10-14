@@ -338,7 +338,7 @@ MonoBehaviour:
     m_PersistentCalls:
       m_Calls:
       - m_Target: {fileID: 2120763079}
-        m_TargetAssemblyTypeName: Code.Scripts.Player.PlayerSpawner, Code.Scripts.Player
+        m_TargetAssemblyTypeName: StarStoneStudio.DungeonGeneration.Samples.PlayerSpawner, StarStoneStudio.DungeonGeneration.Samples
         m_MethodName: SpawnPlayer
         m_Mode: 1
         m_Arguments:

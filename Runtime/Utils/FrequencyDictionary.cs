@@ -1,8 +1,7 @@
-using Code.Scripts.Utils.SerializableDictionary;
 using System;
 using System.Collections.Generic;
 
-namespace Code.Scripts.Utils
+namespace StarStoneStudio.DungeonGeneration.Utils
 {
     /// <summary>
     /// Represents a specialized <see cref="Dictionary{TKey,TValue}"/> that tracks the frequency of occurrences for a given key.

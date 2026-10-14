@@ -1,7 +1,7 @@
 using UnityEngine;
 using UnityEngine.InputSystem;
 
-namespace Code.Scripts.Player
+namespace StarStoneStudio.DungeonGeneration.Samples
 {
     /// <summary>
     /// Manages player movement and gravity application using Unity's Input System and CharacterController component.

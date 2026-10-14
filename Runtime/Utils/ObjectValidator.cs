@@ -3,7 +3,7 @@
 using UnityEditor;
 using UnityEngine;
 
-namespace Code.Scripts.Utils
+namespace StarStoneStudio.DungeonGeneration.Utils
 {
     /// <summary>
     /// Provides utility methods for validating <see cref="Object"/> data and logging configuration errors in the Unity editor.

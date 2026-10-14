@@ -1,0 +1,18 @@
+{
+    "name": "StarStoneStudio.DungeonGeneration.Editor",
+    "rootNamespace": "StarStoneStudio.DungeonGeneration.Editor",
+    "references": [
+        "StarStoneStudio.DungeonGeneration"
+    ],
+    "includePlatforms": [
+        "Editor"
+    ],
+    "excludePlatforms": [],
+    "allowUnsafeCode": false,
+    "overrideReferences": false,
+    "precompiledReferences": [],
+    "autoReferenced": true,
+    "defineConstraints": [],
+    "versionDefines": [],
+    "noEngineReferences": false
+}

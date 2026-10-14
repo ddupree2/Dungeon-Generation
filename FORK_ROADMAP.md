@@ -12,9 +12,9 @@ Work through the tiers in order. Each tier makes the next one safer to change.
 
 Main files referenced below:
 
-- `Runtime/Dungeon/Behaviours/Runtime/DungeonGenerator.cs`
-- `Runtime/Dungeon/Behaviours/Runtime/DungeonModule.cs`
-- `Runtime/Dungeon/Algorithms/AliasProbability.cs`
+- `Runtime/Behaviours/DungeonGenerator.cs`
+- `Runtime/Behaviours/DungeonModule.cs`
+- `Runtime/Algorithms/AliasProbability.cs`
 
 ---
 

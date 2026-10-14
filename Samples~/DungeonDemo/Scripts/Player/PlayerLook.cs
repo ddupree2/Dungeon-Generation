@@ -1,7 +1,7 @@
 using UnityEngine;
 using UnityEngine.InputSystem;
 
-namespace Code.Scripts.Player
+namespace StarStoneStudio.DungeonGeneration.Samples
 {
     /// <summary>
     /// Handles camera functionality by applying pitch (vertical) and yaw (horizontal) rotation to the camera and player body.
