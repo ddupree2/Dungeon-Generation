@@ -33,12 +33,31 @@ namespace StarStoneStudio.DungeonGeneration.Editor
             public readonly float Depth;
             public readonly Side[] Doorways;
 
+            /// <summary>
+            /// How far the North doorway sits above the South one. Non-zero makes the module a ramp up to the next level.
+            /// </summary>
+            public readonly float Rise;
+
             public ModuleSpec(string name, float width, float depth, params Side[] doorways)
+                : this(name, width, depth, 0f, doorways)
+            {
+            }
+
+            private ModuleSpec(string name, float width, float depth, float rise, Side[] doorways)
             {
                 Name = name;
                 Width = width;
                 Depth = depth;
+                Rise = rise;
                 Doorways = doorways;
+            }
+
+            /// <summary>
+            /// A straight ramp from a South doorway at floor level to a North doorway <paramref name="rise"/> units higher.
+            /// </summary>
+            public static ModuleSpec Stairs(string name, float width, float depth, float rise)
+            {
+                return new ModuleSpec(name, width, depth, rise, new[] { Side.South, Side.North });
             }
         }
 
@@ -79,8 +98,9 @@ namespace StarStoneStudio.DungeonGeneration.Editor
             new("Shop", ModuleRole.Branch, 0f, true, new Color(0.2f, 0.8f, 0.8f),
                 (new ModuleSpec("Shop", 6, 8, Side.South, Side.North), 1f)),
             new("Hallway", ModuleRole.Connector, 1f, false, new Color(0.6f, 0.6f, 0.6f),
-                (new ModuleSpec("Hallway_Straight", 4, 8, Side.South, Side.North), 0.6f),
-                (new ModuleSpec("Hallway_Corner", 4, 4, Side.South, Side.East), 0.4f))
+                (new ModuleSpec("Hallway_Straight", 4, 8, Side.South, Side.North), 0.5f),
+                (new ModuleSpec("Hallway_Corner", 4, 4, Side.South, Side.East), 0.3f),
+                (ModuleSpec.Stairs("Hallway_Stairs", 4, 8, 3f), 0.2f))
         };
 
         [MenuItem("Tools/Dungeon Generation/Create Test Content")]
@@ -219,7 +239,7 @@ namespace StarStoneStudio.DungeonGeneration.Editor
 
         /// <summary>
         /// Builds a module prefab: a floor, a bounds collider inset from the footprint, and a doorway on each requested side with
-        /// an empty open state and a wall as the closed state. Only the bounds collider has physics.
+        /// an empty open state and a wall as the closed state. The floor (or ramp) has a solid collider on the Default layer so it can be walked on; the bounds collider is a trigger on the bounds layer.
         /// </summary>
         private static GameObject CreateModulePrefab(string folderPath, ModuleSpec moduleSpec, Material floorMaterial, Material closedMaterial, int boundsLayer)
         {
@@ -227,16 +247,16 @@ namespace StarStoneStudio.DungeonGeneration.Editor
 
             try
             {
-                var floorObject = CreateVisual(PrimitiveType.Cube, "Floor", moduleRoot.transform, floorMaterial);
-                floorObject.transform.localPosition = new Vector3(0f, -0.1f, 0f);
-                floorObject.transform.localScale = new Vector3(moduleSpec.Width, 0.2f, moduleSpec.Depth);
+                CreateFloor(moduleRoot.transform, moduleSpec, floorMaterial);
 
+                // Bounds cover the full walkable volume, including the extra height a ramp climbs
+                var boundsHeight = WallHeight + moduleSpec.Rise;
                 var boundsObject = new GameObject("Bounds") { layer = boundsLayer };
                 boundsObject.transform.SetParent(moduleRoot.transform, false);
 
                 var boundsCollider = boundsObject.AddComponent<BoxCollider>();
-                boundsCollider.center = new Vector3(0f, WallHeight / 2f, 0f);
-                boundsCollider.size = new Vector3(moduleSpec.Width - BoundsInset * 2f, WallHeight, moduleSpec.Depth - BoundsInset * 2f);
+                boundsCollider.center = new Vector3(0f, boundsHeight / 2f, 0f);
+                boundsCollider.size = new Vector3(moduleSpec.Width - BoundsInset * 2f, boundsHeight, moduleSpec.Depth - BoundsInset * 2f);
                 boundsCollider.isTrigger = true;
 
                 var doorways = moduleSpec.Doorways
@@ -254,11 +274,35 @@ namespace StarStoneStudio.DungeonGeneration.Editor
             }
         }
 
+        /// <summary>
+        /// Builds a walkable floor with a box collider on the Default layer: a flat slab, or for stairs a ramp up to the North doorway.
+        /// </summary>
+        private static void CreateFloor(Transform moduleRoot, ModuleSpec moduleSpec, Material floorMaterial)
+        {
+            var floorObject = CreateVisual(PrimitiveType.Cube, "Floor", moduleRoot, floorMaterial, true);
+
+            if (moduleSpec.Rise <= 0f)
+            {
+                floorObject.transform.localPosition = new Vector3(0f, -0.1f, 0f);
+                floorObject.transform.localScale = new Vector3(moduleSpec.Width, 0.2f, moduleSpec.Depth);
+                return;
+            }
+
+            // A slab tilted so its top surface runs from the South edge at floor level to the North edge at the rise
+            var rampLength = Mathf.Sqrt(moduleSpec.Depth * moduleSpec.Depth + moduleSpec.Rise * moduleSpec.Rise);
+            var rampAngle = Mathf.Atan2(moduleSpec.Rise, moduleSpec.Depth) * Mathf.Rad2Deg;
+            var rampDown = Quaternion.Euler(-rampAngle, 0f, 0f) * new Vector3(0f, -0.1f, 0f);
+
+            floorObject.transform.localRotation = Quaternion.Euler(-rampAngle, 0f, 0f);
+            floorObject.transform.localPosition = new Vector3(0f, moduleSpec.Rise / 2f, 0f) + rampDown;
+            floorObject.transform.localScale = new Vector3(moduleSpec.Width, 0.2f, rampLength);
+        }
+
         private static (Transform entrancePoint, GameObject openState, GameObject closedState) CreateDoorway(Transform moduleRoot, ModuleSpec moduleSpec, Side doorwaySide, Material closedMaterial)
         {
             var (localPosition, yaw) = doorwaySide switch
             {
-                Side.North => (new Vector3(0f, 0f, moduleSpec.Depth / 2f), 0f),
+                Side.North => (new Vector3(0f, moduleSpec.Rise, moduleSpec.Depth / 2f), 0f),
                 Side.East => (new Vector3(moduleSpec.Width / 2f, 0f, 0f), 90f),
                 Side.South => (new Vector3(0f, 0f, -moduleSpec.Depth / 2f), 180f),
                 _ => (new Vector3(-moduleSpec.Width / 2f, 0f, 0f), 270f)
@@ -280,13 +324,16 @@ namespace StarStoneStudio.DungeonGeneration.Editor
             return (entrancePoint, openState, closedState);
         }
 
-        private static GameObject CreateVisual(PrimitiveType primitiveType, string objectName, Transform parentTransform, Material visualMaterial)
+        private static GameObject CreateVisual(PrimitiveType primitiveType, string objectName, Transform parentTransform, Material visualMaterial, bool keepCollider = false)
         {
             var visualObject = GameObject.CreatePrimitive(primitiveType);
             visualObject.name = objectName;
             visualObject.transform.SetParent(parentTransform, false);
 
-            Object.DestroyImmediate(visualObject.GetComponent<Collider>());
+            if (!keepCollider)
+            {
+                Object.DestroyImmediate(visualObject.GetComponent<Collider>());
+            }
             visualObject.GetComponent<MeshRenderer>().sharedMaterial = visualMaterial;
 
             return visualObject;
