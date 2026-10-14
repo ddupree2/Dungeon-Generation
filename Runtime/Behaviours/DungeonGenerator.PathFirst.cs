@@ -1,4 +1,5 @@
 using System;
+using System.Collections;
 using System.Collections.Generic;
 using System.Linq;
 using UnityEngine;
@@ -15,6 +16,8 @@ namespace StarStoneStudio.DungeonGeneration
     /// <item><description>Optionally connect touching doorways as loops, then close every remaining doorway.</description></item>
     /// </list>
     /// Rooms are placed as <see cref="PlacementUnit"/>s: the room plus the connectors leading into it, added and removed together.
+    /// Each phase is a step iterator that yields after every placement attempt, so <see cref="GenerateDungeonAsync"/> can spread
+    /// the work over several frames while the synchronous path runs the same steps to completion.
     /// </summary>
     public partial class DungeonGenerator
     {
@@ -45,6 +48,14 @@ namespace StarStoneStudio.DungeonGeneration
         }
 
         /// <summary>
+        /// Carries a value out of a step iterator, which can't return one directly.
+        /// </summary>
+        private sealed class StepResult<TValue>
+        {
+            public TValue Value;
+        }
+
+        /// <summary>
         /// Checks that the theme has every role a path-first layout depends on and sets the backtracking budget.
         /// </summary>
         private void InitializePathFirst()
@@ -63,21 +74,26 @@ namespace StarStoneStudio.DungeonGeneration
         }
 
         /// <summary>
-        /// Builds the full path-first layout. Sets <see cref="generationError"/> if any phase fails.
+        /// Builds the full path-first layout, one placement attempt per step. Sets <see cref="generationError"/> if any phase fails.
         /// </summary>
-        private void GeneratePathFirstLayout()
+        private IEnumerator PathFirstSteps()
         {
             if (!PlaceStartModule())
             {
                 generationError = GenerationError.MissingRoleCategory;
-                return;
+                yield break;
             }
 
-            var mainRooms = GenerateMainPath();
-            if (generationError != GenerationError.None) return;
+            var mainRooms = new List<DungeonModule>();
+            var mainPathSteps = MainPathSteps(mainRooms);
+            while (mainPathSteps.MoveNext()) yield return null;
 
-            GrowBranches(mainRooms);
-            if (generationError != GenerationError.None) return;
+            if (generationError != GenerationError.None) yield break;
+
+            var branchSteps = BranchSteps(mainRooms);
+            while (branchSteps.MoveNext()) yield return null;
+
+            if (generationError != GenerationError.None) yield break;
 
             if (enableLoops)
             {
@@ -104,7 +120,7 @@ namespace StarStoneStudio.DungeonGeneration
                     continue;
                 }
 
-                var moduleInstance = Instantiate(startAsset.ModulePrefab, transform);
+                var moduleInstance = InstantiateModule(startAsset.ModulePrefab);
                 startModule = moduleInstance.GetComponent<DungeonModule>();
 
                 RecordModule(new HistoryEntry(startAsset, startCategory, startModule, null, null, false));
@@ -121,8 +137,8 @@ namespace StarStoneStudio.DungeonGeneration
         /// Grows the main path from the Start module: N MainPath rooms, then Boss, then End. When a unit can't be placed, the
         /// previous main-path unit is removed and placed again (backtracking pops main-path units only; if nothing fits off Start, Start itself is placed again).
         /// </summary>
-        /// <returns>The MainPath rooms that were placed, in order.</returns>
-        private List<DungeonModule> GenerateMainPath()
+        /// <param name="mainRooms">Filled with the MainPath rooms that were placed, in order.</param>
+        private IEnumerator MainPathSteps(List<DungeonModule> mainRooms)
         {
             var mainPathLength = NextInRange(selectedTheme.MainPathLength.Minimum, selectedTheme.MainPathLength.Maximum + 1);
 
@@ -138,7 +154,11 @@ namespace StarStoneStudio.DungeonGeneration
                 var tipModule = 0 < placedUnits.Count ? placedUnits.Peek().Room : startModule;
 
                 // Every main-path room except End needs a doorway left over for the next one; Boss needs one for End
-                var placedUnit = TryPlaceUnit(tipModule, plannedRole, true, plannedRole != ModuleRole.End, null);
+                var unitResult = new StepResult<PlacementUnit>();
+                var unitSteps = PlaceUnitSteps(tipModule, plannedRole, true, plannedRole != ModuleRole.End, null, unitResult);
+                while (unitSteps.MoveNext()) yield return null;
+
+                var placedUnit = unitResult.Value;
                 if (placedUnit != null)
                 {
                     placedUnits.Push(placedUnit);
@@ -168,11 +188,10 @@ namespace StarStoneStudio.DungeonGeneration
                 }
             }
 
-            return placedUnits
+            mainRooms.AddRange(placedUnits
                 .Reverse()
                 .Select(placedUnit => placedUnit.Room)
-                .Where(placedRoom => placedRoom.Role == ModuleRole.MainPath)
-                .ToList();
+                .Where(placedRoom => placedRoom.Role == ModuleRole.MainPath));
         }
 
         /// <summary>
@@ -181,10 +200,10 @@ namespace StarStoneStudio.DungeonGeneration
         /// backtracking because each unit is placed or removed as a whole.
         /// </summary>
         /// <param name="mainRooms">The MainPath rooms branches may grow from.</param>
-        private void GrowBranches(List<DungeonModule> mainRooms)
+        private IEnumerator BranchSteps(List<DungeonModule> mainRooms)
         {
             var branchCategories = selectedTheme.CategoriesWithRole(ModuleRole.Branch);
-            if (branchCategories.Count <= 0) return;
+            if (branchCategories.Count <= 0) yield break;
 
             // Required Branch categories, repeated by their minimum spawn count
             var requiredCategories = new List<ModuleCategory>();
@@ -215,7 +234,11 @@ namespace StarStoneStudio.DungeonGeneration
                     var requiredCategory = 0 < requiredCategories.Count ? requiredCategories[0] : null;
                     var needsOpenDoorway = depthIndex < branchDepth - 1;
 
-                    var placedUnit = TryPlaceUnit(tipModule, ModuleRole.Branch, false, needsOpenDoorway, requiredCategory);
+                    var unitResult = new StepResult<PlacementUnit>();
+                    var unitSteps = PlaceUnitSteps(tipModule, ModuleRole.Branch, false, needsOpenDoorway, requiredCategory, unitResult);
+                    while (unitSteps.MoveNext()) yield return null;
+
+                    var placedUnit = unitResult.Value;
                     if (placedUnit == null) break;
 
                     // Any placed room satisfies one outstanding requirement for its category
@@ -263,8 +286,8 @@ namespace StarStoneStudio.DungeonGeneration
         /// <param name="isMainPath">Whether the unit is part of the main path.</param>
         /// <param name="needsOpenDoorway">Whether the room must keep a free doorway for whatever attaches to it next.</param>
         /// <param name="requiredCategory">If set, the room must come from this category.</param>
-        /// <returns>The placed unit, or <c>null</c> if it could not be placed.</returns>
-        private PlacementUnit TryPlaceUnit(DungeonModule tipModule, ModuleRole targetRole, bool isMainPath, bool needsOpenDoorway, ModuleCategory requiredCategory)
+        /// <param name="unitResult">Receives the placed unit, or <c>null</c> if it could not be placed.</param>
+        private IEnumerator PlaceUnitSteps(DungeonModule tipModule, ModuleRole targetRole, bool isMainPath, bool needsOpenDoorway, ModuleCategory requiredCategory, StepResult<PlacementUnit> unitResult)
         {
             var targetCategories = requiredCategory != null
                 ? new List<ModuleCategory> { requiredCategory }
@@ -274,10 +297,10 @@ namespace StarStoneStudio.DungeonGeneration
 
             for (var unitAttempt = 0; unitAttempt < UnitAttemptLimit; unitAttempt++)
             {
-                if (tipModule.ConnectableEntrances.Count <= 0) return null;
+                if (tipModule.ConnectableEntrances.Count <= 0) yield break;
 
                 var availableTargets = AvailableCategories(targetCategories);
-                if (availableTargets.Count <= 0) return null;
+                if (availableTargets.Count <= 0) yield break;
 
                 var connectorCount = ChooseConnectorCount(tipModule.Category, targetRole, availableTargets, connectorCategories);
                 var currentModule = tipModule;
@@ -292,7 +315,11 @@ namespace StarStoneStudio.DungeonGeneration
                         .Where(connectorCategory => !isLastConnector || availableTargets.Any(targetCategory => CanConnect(connectorCategory, targetCategory)))
                         .ToList();
 
-                    var placedConnector = TryPlacePiece(currentModule, candidateConnectors, true, isMainPath);
+                    var connectorResult = new StepResult<DungeonModule>();
+                    var connectorSteps = PlacePieceSteps(currentModule, candidateConnectors, true, isMainPath, connectorResult);
+                    while (connectorSteps.MoveNext()) yield return null;
+
+                    var placedConnector = connectorResult.Value;
                     if (placedConnector == null)
                     {
                         connectorsPlaced = false;
@@ -310,10 +337,14 @@ namespace StarStoneStudio.DungeonGeneration
                         .Where(targetCategory => CanConnect(connectedModule.Category, targetCategory))
                         .ToList();
 
-                    var placedRoom = TryPlacePiece(currentModule, candidateRooms, needsOpenDoorway, isMainPath);
-                    if (placedRoom != null)
+                    var roomResult = new StepResult<DungeonModule>();
+                    var roomSteps = PlacePieceSteps(currentModule, candidateRooms, needsOpenDoorway, isMainPath, roomResult);
+                    while (roomSteps.MoveNext()) yield return null;
+
+                    if (roomResult.Value != null)
                     {
-                        return new PlacementUnit(placedRoom, placedCount + 1);
+                        unitResult.Value = new PlacementUnit(roomResult.Value, placedCount + 1);
+                        yield break;
                     }
                 }
 
@@ -323,8 +354,6 @@ namespace StarStoneStudio.DungeonGeneration
                     PopModule();
                 }
             }
-
-            return null;
         }
 
         /// <summary>
@@ -363,14 +392,14 @@ namespace StarStoneStudio.DungeonGeneration
         /// <param name="candidateCategories">The categories the new module may come from, already filtered by the connection rules.</param>
         /// <param name="needsOpenDoorway">Whether the new module must keep at least one free doorway after connecting.</param>
         /// <param name="isMainPath">Whether the new module is part of the main path.</param>
-        /// <returns>The placed module, or <c>null</c> if nothing fit.</returns>
-        private DungeonModule TryPlacePiece(DungeonModule tipModule, List<ModuleCategory> candidateCategories, bool needsOpenDoorway, bool isMainPath)
+        /// <param name="pieceResult">Receives the placed module, or <c>null</c> if nothing fit.</param>
+        private IEnumerator PlacePieceSteps(DungeonModule tipModule, List<ModuleCategory> candidateCategories, bool needsOpenDoorway, bool isMainPath, StepResult<DungeonModule> pieceResult)
         {
             var remainingCategories = new List<ModuleCategory>(candidateCategories);
 
             for (var placementAttempt = 0; placementAttempt < PlacementLimit; placementAttempt++)
             {
-                if (remainingCategories.Count <= 0 || tipModule.ConnectableEntrances.Count <= 0) return null;
+                if (remainingCategories.Count <= 0 || tipModule.ConnectableEntrances.Count <= 0) yield break;
 
                 var moduleCategory = WeightedPick(remainingCategories, candidateCategory => candidateCategory.SpawnRate);
                 var moduleAsset = SampleAvailableAsset(moduleCategory);
@@ -381,7 +410,7 @@ namespace StarStoneStudio.DungeonGeneration
                     continue;
                 }
 
-                var moduleInstance = Instantiate(moduleAsset.ModulePrefab, transform);
+                var moduleInstance = InstantiateModule(moduleAsset.ModulePrefab);
                 var instantiatedModule = moduleInstance.GetComponent<DungeonModule>();
 
                 var instantiatedEntrance = instantiatedModule.SelectConnectableEntrance(randomSource);
@@ -393,6 +422,7 @@ namespace StarStoneStudio.DungeonGeneration
                 if (instantiatedEntrance == null || leavesNoDoorway)
                 {
                     DestroyModule(instantiatedModule);
+                    yield return null;
                     continue;
                 }
 
@@ -401,6 +431,7 @@ namespace StarStoneStudio.DungeonGeneration
                 if (ContainsIntersections(instantiatedModule))
                 {
                     DestroyModule(instantiatedModule);
+                    yield return null;
                     continue;
                 }
 
@@ -413,10 +444,9 @@ namespace StarStoneStudio.DungeonGeneration
                 RecordModule(new HistoryEntry(moduleAsset, moduleCategory, instantiatedModule, connectedEntrance, null, false));
                 instantiatedModule.IsMainPath = isMainPath;
 
-                return instantiatedModule;
+                pieceResult.Value = instantiatedModule;
+                yield break;
             }
-
-            return null;
         }
 
         /// <summary>

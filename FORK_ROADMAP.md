@@ -164,7 +164,7 @@ Rules for authoring room prefabs, so the game code and the generator don't fight
 - [ ] Doorway sockets (per-doorway tags such as size or type), checked alongside category rules, so wide gates only connect to wide gates.
 - [ ] Plan the layout as data first and instantiate only the final rooms, removing the instantiate-and-destroy cost and the physics dependency.
 - [x] Re-enable loops once backtracking handles secondary connections correctly. (Tier 1 #4; path-first connects loops after the structure is built.)
-- [ ] Generate over several frames (coroutine or async) for large layouts.
+- [x] Generate over several frames (coroutine or async) for large layouts. `GenerateDungeonAsync` (Awaitable) with a per-frame budget, `HideUntilComplete`, `DeferActivation` + `ActivateModules()`, cancellation, and `BuildNavMeshAsync()`. Sync and async run the same step iterator, so a seed gives the same layout either way.
 
 ---
 
@@ -183,3 +183,8 @@ Rules for authoring room prefabs, so the game code and the generator don't fight
 Generation leaves `UnityEngine.Random` untouched. Loops were not exercised: with the test content, facing doorways almost never meet (one Room–Room pair in 30 layouts, correctly denied by the rules).
 
 Fixed by this run: a failed first unit off Start used to fail the whole pass (1 in 150 with connectors 0–1, when every retry picked a corner hallway that turns back into Start); Start is now placed again within the backtrack budget. Loop detection required `dot < -1` (never true) and accepted any opposite-facing doorway on the hit module; it now needs doorways that face each other (`dot < -0.99`) within 0.1 units.
+
+**2026-10-14, async generation** (same harness, Play Mode in batch mode):
+seeds 1–15 generated async with a 0.25 ms frame budget (16–48 frames each) match the synchronous layouts exactly; `HideUntilComplete` keeps
+renderers off mid-pass and restores them; `DeferActivation` waits for `ActivateModules()`; a second request while generating returns
+`GenerationInProgress`; cancelling throws and leaves no modules; `BuildNavMeshAsync` produces a NavMesh. All sync scenarios above unchanged.

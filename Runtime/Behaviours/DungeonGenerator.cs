@@ -1,6 +1,7 @@
 using StarStoneStudio.DungeonGeneration.Attributes;
 using StarStoneStudio.DungeonGeneration.Utils;
 using System;
+using System.Collections;
 using System.Collections.Generic;
 using System.Linq;
 using Unity.AI.Navigation;
@@ -199,78 +200,116 @@ namespace StarStoneStudio.DungeonGeneration
         /// Generates a dungeon from a specific seed. The same seed and themes always produce the same layout.
         /// </summary>
         /// <param name="seed">The seed to generate from, or <c>0</c> to pick a new random seed.</param>
-        /// <param name="silent">If <c>true</c>, skips logging and the generation callbacks (used by batch testing).</param>
+        /// <param name="silent">If <c>true</c>, skips logging, callbacks and listener activation (used by batch testing).</param>
         /// <returns>The <see cref="GenerationResult"/> describing the outcome, including the seed that was used.</returns>
         public GenerationResult GenerateDungeon(int seed, bool silent = false)
         {
-            var generationTimer = System.Diagnostics.Stopwatch.StartNew();
-            var resolvedSeed = seed != 0 ? seed : CreateSeed();
+            return GenerateDungeon(seed, new GenerationOptions { Silent = silent });
+        }
 
-            // Clear the current generation iteration (if any) and reset the parameters used by the generator
-            ResetEnvironment();
-            InitializeGeneration(resolvedSeed);
+        /// <summary>
+        /// Generates a dungeon from a specific seed within the current frame.
+        /// Produces exactly the same layout as <see cref="GenerateDungeonAsync"/> for the same seed.
+        /// </summary>
+        /// <param name="seed">The seed to generate from, or <c>0</c> to pick a new random seed.</param>
+        /// <param name="options">Logging, activation and visibility options. The frame budget is ignored.</param>
+        /// <returns>The <see cref="GenerationResult"/> describing the outcome, including the seed that was used.</returns>
+        public GenerationResult GenerateDungeon(int seed, GenerationOptions options)
+        {
+            if (RejectWhileGenerating(seed, out var rejectedResult)) return rejectedResult;
 
-            if (generationError == GenerationError.None)
+            var generationSteps = GenerationSteps(seed, options);
+
+            generationTimer.Restart();
+            while (generationSteps.MoveNext()) { }
+
+            return LastResult;
+        }
+
+        /// <summary>
+        /// The whole generation pass as a sequence of small steps: reset, initialize, build the layout one placement attempt at a
+        /// time, then finalize. The synchronous and asynchronous entry points both run these same steps, so they always agree.
+        /// </summary>
+        /// <param name="seed">The requested seed, or <c>0</c> for a random one.</param>
+        /// <param name="options">Logging, activation and visibility options.</param>
+        private IEnumerator GenerationSteps(int seed, GenerationOptions options)
+        {
+            isGenerating = true;
+
+            try
             {
-                if (selectedTheme.LayoutMode == LayoutMode.PathFirst)
+                var resolvedSeed = seed != 0 ? seed : CreateSeed();
+
+                // Clear the current generation iteration (if any) and reset the parameters used by the generator
+                ClearLayout();
+                hideNewModules = options.HideUntilComplete;
+                InitializeGeneration(resolvedSeed);
+
+                if (generationError == GenerationError.None)
                 {
-                    GeneratePathFirstLayout();
+                    var layoutSteps = selectedTheme.LayoutMode == LayoutMode.PathFirst ? PathFirstSteps() : WeightedSteps();
+                    while (layoutSteps.MoveNext()) yield return null;
                 }
-                else
+
+                // Close any remaining open entrances using each passage's closed state
+                foreach (var placedModule in placedModules)
                 {
-                    GenerateWeightedLayout();
+                    placedModule.ToggleConnectableEntrances(false);
                 }
+
+                // Path-first layouts are sized by their structure rather than a module count
+                if (selectedTheme != null && selectedTheme.LayoutMode == LayoutMode.PathFirst)
+                {
+                    moduleLimit = moduleCount;
+                }
+
+                if (generationError == GenerationError.None && moduleCount < moduleLimit)
+                {
+                    generationError = GenerationError.UnknownError;
+                }
+
+                AssignDepths();
+                RevealHiddenModules();
+
+                LastResult = new GenerationResult(
+                    resolvedSeed,
+                    generationError,
+                    selectedTheme != null ? selectedTheme.ThemeTitle : null,
+                    moduleCount,
+                    moduleLimit,
+                    backtrackAttempts,
+                    generationTimer.Elapsed.TotalMilliseconds
+                );
             }
-
-
-            // Close any remaining open entrances using each passage's closed state
-            foreach (var placedModule in placedModules)
+            finally
             {
-                placedModule.ToggleConnectableEntrances(false);
+                // Also runs when an asynchronous pass is cancelled part-way
+                isGenerating = false;
+                RevealHiddenModules();
             }
 
-            // Path-first layouts are sized by their structure rather than a module count
-            if (selectedTheme != null && selectedTheme.LayoutMode == LayoutMode.PathFirst)
-            {
-                moduleLimit = moduleCount;
-            }
-
-            if (generationError == GenerationError.None && moduleCount < moduleLimit)
-            {
-                generationError = GenerationError.UnknownError;
-            }
-
-            AssignDepths();
-
-            generationTimer.Stop();
-            LastResult = new GenerationResult(
-                resolvedSeed,
-                generationError,
-                selectedTheme != null ? selectedTheme.ThemeTitle : null,
-                moduleCount,
-                moduleLimit,
-                backtrackAttempts,
-                generationTimer.Elapsed.TotalMilliseconds
-            );
-
-            if (silent) return LastResult;
+            if (options.Silent) yield break;
 
             #if UNITY_EDITOR
 
             if (LastResult.Succeeded)
             {
-                Debug.Log($"<color=green>[{name}] <b>Dungeon Generation Complete: {moduleLimit}</b> (seed {resolvedSeed})</color>", gameObject);
+                Debug.Log($"<color=green>[{name}] <b>Dungeon Generation Complete: {moduleLimit}</b> (seed {LastResult.Seed})</color>", gameObject);
             }
             else
             {
-                Debug.LogError($"[{name}] Generation Failed (seed {resolvedSeed}): {GenerationResult.Describe(generationError)}", gameObject);
+                Debug.LogError($"[{name}] Generation Failed (seed {LastResult.Seed}): {GenerationResult.Describe(generationError)}", gameObject);
             }
 
             #endif
 
             if (LastResult.Succeeded)
             {
-                ActivateModules();
+                if (!options.DeferActivation)
+                {
+                    ActivateModules();
+                }
+
                 onGenerationSuccess.Invoke();
             }
             else
@@ -279,14 +318,13 @@ namespace StarStoneStudio.DungeonGeneration
             }
 
             GenerationCompleted?.Invoke(LastResult);
-            return LastResult;
         }
 
         /// <summary>
         /// Fills the layout for a <see cref="LayoutMode.Weighted"/> theme: samples weighted categories and attaches their modules to
-        /// any open doorway until the module count is reached, placing required modules along the way.
+        /// any open doorway until the module count is reached, placing required modules along the way. Yields once per placement.
         /// </summary>
-        private void GenerateWeightedLayout()
+        private IEnumerator WeightedSteps()
         {
             // Every loop below is capped so an unsatisfiable theme fails with an error instead of freezing the editor
             var iterationCount = 0;
@@ -294,6 +332,8 @@ namespace StarStoneStudio.DungeonGeneration
 
             while (generationError == GenerationError.None && moduleCount < moduleLimit)
             {
+                yield return null;
+
                 if (iterationLimit <= iterationCount++)
                 {
                     generationError = GenerationError.IterationLimitExceeded;
@@ -354,6 +394,8 @@ namespace StarStoneStudio.DungeonGeneration
                     var categoryAttempts = 0;
                     while (generationError == GenerationError.None && categoryCount < categoryLimit)
                     {
+                        yield return null;
+
                         if (SamplingLimit <= categoryAttempts++)
                         {
                             generationError = GenerationError.CategoryPlacementFailed;
@@ -389,23 +431,6 @@ namespace StarStoneStudio.DungeonGeneration
                 }
 
                 placedModule.Depth = parentModule.Depth + (placedModule.Role == ModuleRole.Connector ? 0 : 1);
-            }
-        }
-
-        /// <summary>
-        /// Tells every <see cref="IDungeonModuleListener"/> on the final modules that generation succeeded, so room logic can start.
-        /// Only runs in Play Mode; layouts generated in the editor are left inert.
-        /// </summary>
-        private void ActivateModules()
-        {
-            if (!Application.isPlaying) return;
-
-            foreach (var placedModule in placedModules)
-            {
-                foreach (var moduleListener in placedModule.GetComponentsInChildren<IDungeonModuleListener>(true))
-                {
-                    moduleListener.Activate(placedModule, this);
-                }
             }
         }
 
@@ -725,7 +750,7 @@ namespace StarStoneStudio.DungeonGeneration
                 return false;
             }
 
-            var moduleInstance = Instantiate(moduleAsset.ModulePrefab, transform);
+            var moduleInstance = InstantiateModule(moduleAsset.ModulePrefab);
 
             var instantiatedModule = moduleInstance.GetComponent<DungeonModule>();
             var instantiatedEntrance = instantiatedModule.SelectConnectableEntrance(randomSource);
@@ -1033,13 +1058,7 @@ namespace StarStoneStudio.DungeonGeneration
                 return;
             }
             
-            var navMeshSurface = gameObject.GetComponent<NavMeshSurface>();
-            if (navMeshSurface == null)
-            {
-                navMeshSurface = gameObject.AddComponent<NavMeshSurface>();
-            }
-
-            navMeshSurface.BuildNavMesh();
+            EnsureNavMeshSurface().BuildNavMesh();
         }
         
         /// <summary>
@@ -1047,8 +1066,24 @@ namespace StarStoneStudio.DungeonGeneration
         /// </summary>
         public void ResetEnvironment()
         {
+            if (isGenerating)
+            {
+                Debug.LogWarning($"[{name}] Can't reset while a dungeon is generating.", gameObject);
+                return;
+            }
+
+            ClearLayout();
+        }
+
+        /// <summary>
+        /// Destroys every generated module and the baked NavMesh, and forgets the current layout.
+        /// </summary>
+        private void ClearLayout()
+        {
             placedModules.Clear();
             loopConnections.Clear();
+            hiddenComponents.Clear();
+            modulesActivated = false;
 
             for (var itemIndex = transform.childCount - 1; 0 <= itemIndex; itemIndex--)
             {

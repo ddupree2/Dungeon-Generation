@@ -17,6 +17,7 @@ namespace StarStoneStudio.DungeonGeneration
         MissingRoleCategory = 501,
         MainPathFailed = 502,
         RequiredBranchFailed = 503,
+        GenerationInProgress = 601,
         UnknownError = 999
     }
 
@@ -97,6 +98,7 @@ namespace StarStoneStudio.DungeonGeneration
                 GenerationError.MissingRoleCategory => "Path-first themes need categories with the Start, MainPath, Boss and End roles, each with at least one usable module.",
                 GenerationError.MainPathFailed => "Could not fit the main path (Start → main path → Boss → End), even after backtracking.",
                 GenerationError.RequiredBranchFailed => "Could not place every required Branch category off the main path.",
+                GenerationError.GenerationInProgress => "This generator was already generating; the request was ignored.",
                 _ => "Unknown error."
             };
         }

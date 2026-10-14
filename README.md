@@ -279,15 +279,20 @@ public class DungeonBootstrap : MonoBehaviour
 | Member | Description |
 |---|---|
 | `GenerateDungeon()` | Generate using the inspector's Seed. |
-| `GenerateDungeon(int seed, bool silent = false)` | Generate from a specific seed (`0` = random). Returns a `GenerationResult`. `silent` skips logging, callbacks and listeners. |
+| `GenerateDungeon(int seed, bool silent = false)` | Generate from a specific seed (`0` = random) within the current frame. Returns a `GenerationResult`. `silent` skips logging, callbacks and listeners. |
+| `GenerateDungeon(int seed, GenerationOptions options)` | Same, with [options](#building-the-next-floor-in-the-background). |
+| `GenerateDungeonAsync(seed, options, cancellationToken)` | Generate over several frames (Play Mode). `await` it for the `GenerationResult`. Same layout as the synchronous call for the same seed. |
+| `ActivateModules()` | Call room listeners now, after a pass with `DeferActivation`. |
+| `BuildNavMeshAsync()` | Bake the NavMesh in the background; returns an `AsyncOperation`. |
+| `IsGenerating` / `ModulesActivated` | Whether a pass is running / whether listeners have been called for the current layout. |
 | `LastResult` | The most recent `GenerationResult`: `Seed`, `Succeeded`, `Error`, `ThemeTitle`, `ModuleCount`, `BacktrackCount`, `ElapsedMilliseconds`. |
 | `GenerationCompleted` | C# event raised after every non-silent generation. |
 | `PlacedModules` | Every module in the layout, in placement order. |
 | `LoopConnections` | Extra connections made by **Enable Loops**. |
 | `SelectedTheme` | The theme used for the current layout. |
-| `GenerateNavMesh()` / `ResetEnvironment()` | Bake the NavMesh / clear the layout. |
+| `GenerateNavMesh()` / `ResetEnvironment()` | Bake the NavMesh in one go / clear the layout. Both bake only this generator's own modules. |
 
-Generation is synchronous and deterministic: the same seed and the same themes/prefabs always give the same layout, and it never touches `UnityEngine.Random`, so other systems' randomness isn't affected.
+Generation is deterministic: the same seed and the same themes/prefabs always give the same layout, whether generated synchronously or asynchronously, and it never touches `UnityEngine.Random`, so other systems' randomness isn't affected.
 
 **Per-module data** (`DungeonModule`, set after placement)
 
@@ -297,6 +302,65 @@ Generation is synchronous and deterministic: the same seed and the same themes/p
 | `Depth` | Rooms from Start, not counting connectors. Start is 0; a hallway has the depth of the room it leads away from. Use it to scale difficulty. |
 | `IsMainPath` | `true` for Start, main-path rooms, Boss, End and the hallways between them; `false` for branches. |
 | `ParentModule` | The module this one was attached to (`null` for the first module). |
+
+### Building the next floor in the background
+
+`GenerateDungeonAsync` spreads generation over several frames so a floor can be built while the player is still playing the current one, with no loading screen and no hitch. It spends about `MillisecondsPerFrame` per frame (default 4 ms); a single placement attempt is never split, so a frame can run slightly over with very heavy rooms.
+
+```csharp
+using StarStoneStudio.DungeonGeneration;
+
+public class FloorStreamer : MonoBehaviour
+{
+    // Two generators far apart (e.g. the next floor 500 units below), so their modules never overlap
+    [SerializeField] private DungeonGenerator currentFloor;
+    [SerializeField] private DungeonGenerator nextFloor;
+
+    private async void PrepareNextFloor(int seed)
+    {
+        var options = new GenerationOptions
+        {
+            MillisecondsPerFrame = 3f,   // per-frame budget
+            HideUntilComplete = true,    // no half-built floor on screen
+            DeferActivation = true       // don't start room logic (enemies etc.) yet
+        };
+
+        var result = await nextFloor.GenerateDungeonAsync(seed, options, destroyCancellationToken);
+        if (!result.Succeeded)
+        {
+            result = await nextFloor.GenerateDungeonAsync(0, options, destroyCancellationToken);   // try another seed
+        }
+
+        await nextFloor.BuildNavMeshAsync();
+    }
+
+    // Called when the player takes the exit
+    private void EnterNextFloor(Transform player)
+    {
+        var start = nextFloor.PlacedModules[0];    // the Start room
+        player.position = start.transform.position;
+
+        nextFloor.ActivateModules();               // room listeners run now
+        currentFloor.ResetEnvironment();
+        (currentFloor, nextFloor) = (nextFloor, currentFloor);
+    }
+}
+```
+
+**`GenerationOptions`**
+
+| Option | Effect |
+|---|---|
+| `MillisecondsPerFrame` | Async only: time budget per frame (0 = default 4 ms). |
+| `HideUntilComplete` | New modules' renderers and lights stay off until the layout is complete. Colliders stay on, because the overlap check needs them. |
+| `DeferActivation` | Don't call `IDungeonModuleListener.Activate` on success; call `ActivateModules()` yourself later. |
+| `Silent` | No logging, callbacks, `GenerationCompleted` event or activation (batch testing). |
+
+**Things to know:**
+- **One pass at a time per generator.** A second request while a pass is running is refused with `GenerationInProgress`, and `ResetEnvironment()` is ignored until the pass ends. Use a second generator for a second floor.
+- **Keep floors apart.** Each generator's overlap check sees every module on the placement layers, including another generator's, so place generators far enough apart that their floors can't overlap.
+- **Cancelling** (your token, or destroying the generator) throws `OperationCanceledException` from the `await` and clears the partial layout.
+- **Deactivating a finished floor is fine.** Calling `SetActive(false)` on a generator after its pass completes is a cheap way to park a ready floor. Don't deactivate it while it's generating: inactive colliders are invisible to the overlap check.
 
 **Room logic: `IDungeonModuleListener`**
 
@@ -319,7 +383,7 @@ public class CombatRoom : MonoBehaviour, IDungeonModuleListener
 }
 ```
 
-`Activate` is called once on every `IDungeonModuleListener` anywhere in each final module's hierarchy, after a **successful** generation in **Play Mode**. It isn't called for layouts generated in the editor, for silent generations, or for batch tests.
+`Activate` is called once on every `IDungeonModuleListener` anywhere in each final module's hierarchy, after a **successful** generation in **Play Mode**, or when you call `ActivateModules()` after a pass with `DeferActivation`. It isn't called for layouts generated in the editor, for silent generations, or for batch tests.
 
 ---
 
@@ -365,6 +429,7 @@ bool ok = report.AllPassed;   // no failures, no rule violations, deterministic
 | `InsufficientSpace` / `InsufficientRequiredSpace` *(weighted)* | Required modules don't fit in the module count. |
 | `InvalidBacktracking` | The backtracking budget ran out. Usually the same causes as `MainPathFailed`. |
 | `NoOptionalCategories` *(weighted)* | Every category is required, but the module count needs more modules. |
+| `GenerationInProgress` | This generator was already generating; the new request was ignored. Wait for the running pass (or use another generator). |
 
 **Common setup problems:**
 - **Everything fails immediately.** **Placement Layers** probably includes a layer used by something already in the scene (a floor, terrain), so every placement overlaps it. Use a dedicated bounds layer.
