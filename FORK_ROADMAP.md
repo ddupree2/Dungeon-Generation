@@ -24,9 +24,9 @@ Main files referenced below:
 
 Three loops can spin forever with no exit condition:
 
-- [ ] **`InitializeRequiredModules`**: the inner `while (spawnCount < spawnLimit)` loop hits `continue` without counting when `SampleWeightedModule` returns null. That happens once every "spawn once" asset in the category has been used.
-- [ ] **`GenerateDungeon` main loop**: hits `continue` when the sampled category is already at its spawn maximum. If every optional category is maxed before `moduleLimit` is reached, the loop never exits.
-- [ ] **Category inner loop** (`while (categoryCount < categoryLimit)`): only increments on success, so repeated null samples spin forever.
+- [x] **`InitializeRequiredModules`**: the inner `while (spawnCount < spawnLimit)` loop hits `continue` without counting when `SampleWeightedModule` returns null. That happens once every "spawn once" asset in the category has been used.
+- [x] **`GenerateDungeon` main loop**: hits `continue` when the sampled category is already at its spawn maximum. If every optional category is maxed before `moduleLimit` is reached, the loop never exits.
+- [x] **Category inner loop** (`while (categoryCount < categoryLimit)`): only increments on success, so repeated null samples spin forever.
 
 **Fix:** give every loop an attempt counter. When it runs out, set a `GenerationError` and break. Don't try to make each loop smarter; just make it impossible for any of them to run forever.
 
@@ -34,19 +34,24 @@ Three loops can spin forever with no exit condition:
 
 ### 2. Unique modules consumed on failed placement
 
-- [ ] `SampleWeightedModule` adds an asset to `uniqueModules` when it is *sampled*, not when it is *placed*. A spawn-once room (such as an exit) that fails to fit once can never spawn again.
-- [ ] Move the "mark as used" step into `RecordModule` (successful placement).
-- [ ] Remove it from `uniqueModules` in `TryBacktracking` when that module is undone.
+- [x] `SampleWeightedModule` adds an asset to `uniqueModules` when it is *sampled*, not when it is *placed*. A spawn-once room (such as an exit) that fails to fit once can never spawn again.
+- [x] Move the "mark as used" step into `RecordModule` (successful placement).
+- [x] Remove it from `uniqueModules` in `TryBacktracking` when that module is undone.
 
 ### 3. Backtracking reported as a successful placement
 
-- [ ] `TryInstantiatingModule` and `TryPlacingModule` both `return TryBacktracking()`. That returns `true`, so callers count it as a placed module and per-category counts drift.
-- [ ] Backtracking changes state but is not a placement. Both paths should return `false` after backtracking so the caller retries.
+- [x] `TryInstantiatingModule` and `TryPlacingModule` both `return TryBacktracking()`. That returns `true`, so callers count it as a placed module and per-category counts drift.
+- [x] Backtracking changes state but is not a placement. Both paths should return `false` after backtracking so the caller retries.
 
 ### 4. Loop connections not undone on backtrack
 
-- [ ] `ResolveSecondaryConnections` closes doorways on *other* modules when loops are enabled, but `TryBacktracking` only reopens the single primary connection stored in `HistoryEntry`.
-- [ ] Either record secondary connections in `HistoryEntry` and reopen them when backtracking, **or** keep `enableLoops` off until after the Tier 3 rewrite.
+- [x] `ResolveSecondaryConnections` closes doorways on *other* modules when loops are enabled, but `TryBacktracking` only reopens the single primary connection stored in `HistoryEntry`.
+- [x] Secondary connections are recorded in `HistoryEntry` and reopened when backtracking.
+
+### 4b. Discarded modules still block placement in Play Mode
+
+- [x] `Destroy` is deferred to the end of the frame, so rejected and backtracked modules kept their colliders live for the rest of generation and caused false overlaps. `DestroyModule` now deactivates the object first.
+- [x] Unity null checks (`is null` / `?.` on components) replaced with `== null` so missing `NavMeshSurface` etc. are detected in the editor.
 
 ---
 

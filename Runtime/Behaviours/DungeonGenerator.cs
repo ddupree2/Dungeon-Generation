@@ -17,6 +17,7 @@ namespace StarStoneStudio.DungeonGeneration
     public class DungeonGenerator : MonoBehaviour
     {
         private const int PlacementLimit = 25;
+        private const int SamplingLimit = 100;
         private const float PlacementThreshold = -1f;
         private const float RequiredChance = 0.5f;
 
@@ -97,7 +98,7 @@ namespace StarStoneStudio.DungeonGeneration
         private FrequencyDictionary<(ModuleAsset, ModuleCategory)> requiredModules;
         
         /// <summary>
-        /// A collection of <see cref="ModuleAsset"/> instances that can only be spawned once.
+        /// Spawn-once <see cref="ModuleAsset"/> instances that are already placed or reserved as required modules.
         /// </summary>
         private List<ModuleAsset> uniqueModules;
         
@@ -149,8 +150,18 @@ namespace StarStoneStudio.DungeonGeneration
             ResetEnvironment();
             InitializeGeneration();
 
+            // Every loop below is capped so an unsatisfiable theme fails with an error instead of freezing the editor
+            var iterationCount = 0;
+            var iterationLimit = moduleLimit * PlacementLimit;
+
             while (generationError == GenerationError.None && moduleCount < moduleLimit)
             {
+                if (iterationLimit <= iterationCount++)
+                {
+                    generationError = GenerationError.IterationLimitExceeded;
+                    break;
+                }
+
                 var openSlots = moduleLimit - moduleCount;
                 if (openSlots < requiredModules.Count)
                 {
@@ -177,6 +188,12 @@ namespace StarStoneStudio.DungeonGeneration
                     }
                 }
 
+                if (categoryProbabilities == null)
+                {
+                    generationError = GenerationError.NoOptionalCategories;
+                    break;
+                }
+
                 var chosenCategory = categoryProbabilities.Sample();
                 if (chosenCategory.SpawnLimits)
                 {
@@ -196,8 +213,15 @@ namespace StarStoneStudio.DungeonGeneration
                     var anticipatedCount = categorizedModules[chosenCategory] + categoryLimit;
                     if (anticipatedCount > chosenCategory.SpawnMaximum) continue;
 
+                    var categoryAttempts = 0;
                     while (generationError == GenerationError.None && categoryCount < categoryLimit)
                     {
+                        if (SamplingLimit <= categoryAttempts++)
+                        {
+                            generationError = GenerationError.CategoryPlacementFailed;
+                            break;
+                        }
+
                         if (InstantiateWeightedModule(chosenCategory))
                         {
                             categoryCount++;
@@ -226,6 +250,10 @@ namespace StarStoneStudio.DungeonGeneration
                     GenerationError.InsufficientRequiredSpace => "Insufficient space to place all required modules.",
                     GenerationError.InvalidHistory => "No generation history available for backtracking.",
                     GenerationError.InvalidBacktracking => "Backtracking limit exceeded.",
+                    GenerationError.IterationLimitExceeded => "Generation loop limit exceeded. Optional categories may be capped below the module count.",
+                    GenerationError.CategoryPlacementFailed => "Could not place enough modules for a spawn-limited category.",
+                    GenerationError.RequiredSamplingFailed => "Could not reserve enough modules for a required category. It may not have enough spawn-once modules.",
+                    GenerationError.NoOptionalCategories => "The theme has no optional categories to fill the remaining module slots.",
                     _ => "Unknown Error"
                 };
                 
@@ -313,7 +341,10 @@ namespace StarStoneStudio.DungeonGeneration
                 weightsList.Add(moduleWeight);
             }
 
-            categoryProbabilities = new AliasProbability<ModuleCategory>(categoryList, weightsList);
+            // A theme made only of required categories has nothing to sample from
+            categoryProbabilities = 0 < categoryList.Count
+                ? new AliasProbability<ModuleCategory>(categoryList, weightsList)
+                : null;
         }
 
         /// <summary>
@@ -374,8 +405,15 @@ namespace StarStoneStudio.DungeonGeneration
                         );
                     }
 
+                    var samplingAttempts = 0;
                     while (spawnCount < spawnLimit)
                     {
+                        if (SamplingLimit <= samplingAttempts++)
+                        {
+                            generationError = GenerationError.RequiredSamplingFailed;
+                            return;
+                        }
+
                         var moduleAsset = SampleWeightedModule(moduleCategory);
                         if (moduleAsset == null) continue;
 
@@ -387,7 +425,7 @@ namespace StarStoneStudio.DungeonGeneration
                 {
                     var moduleAsset = SampleWeightedModule(moduleCategory);
                     if (moduleAsset == null) continue;
-                    
+
                     RegisterRequiredModule(moduleAsset, moduleCategory);
                 }
             }
@@ -400,6 +438,12 @@ namespace StarStoneStudio.DungeonGeneration
         /// <param name="moduleCategory">The <see cref="ModuleCategory"/> of the module being registered.</param>
         private void RegisterRequiredModule(ModuleAsset moduleAsset, ModuleCategory moduleCategory)
         {
+            // Reserve spawn-once modules up front so weighted sampling can't place them a second time
+            if (moduleAsset.SpawnOnce)
+            {
+                uniqueModules.Add(moduleAsset);
+            }
+
             if (requiredModules.ContainsKey((moduleAsset, moduleCategory)) == false)
             {
                 requiredModules[(moduleAsset, moduleCategory)] = 0;    
@@ -447,10 +491,11 @@ namespace StarStoneStudio.DungeonGeneration
         /// </returns>
         private (ModuleAsset, ModuleCategory)? SampleRequiredModule()
         {
-            var targetIndex = UnityEngine.Random.Range(0, requiredModules.Keys.Count());
-            var targetPair = requiredModules.ElementAt(targetIndex);
+            var pendingModules = requiredModules.Where(requiredPair => 0 < requiredPair.Value).ToList();
+            if (pendingModules.Count <= 0) return null;
 
-            return 0 < targetPair.Value ? targetPair.Key : null;
+            var targetIndex = UnityEngine.Random.Range(0, pendingModules.Count);
+            return pendingModules[targetIndex].Key;
         }
 
         /// <summary>
@@ -460,14 +505,13 @@ namespace StarStoneStudio.DungeonGeneration
         /// <returns>
         /// The sampled <see cref="ModuleAsset"/> if valid; otherwise, <c>null</c> if the asset cannot be used.
         /// </returns>
+        /// <remarks>
+        /// Sampling does not consume spawn-once modules; they are marked as used in <see cref="RecordModule"/> once actually placed.
+        /// </remarks>
         private ModuleAsset SampleWeightedModule(ModuleCategory moduleCategory)
         {
             var chosenModule = moduleProbabilities[moduleCategory].Sample();
-            if (chosenModule.SpawnOnce)
-            {
-                if (uniqueModules.Contains(chosenModule)) return null;
-                uniqueModules.Add(chosenModule);
-            }
+            if (chosenModule.SpawnOnce && uniqueModules.Contains(chosenModule)) return null;
 
             return chosenModule;
         }
@@ -482,14 +526,19 @@ namespace StarStoneStudio.DungeonGeneration
         private bool TryPlacingModule(ModuleAsset moduleAsset, ModuleCategory moduleCategory, bool isRequired)
         {
             var placementAttempts = 0;
-            while (placementAttempts < PlacementLimit)
+            while (generationError == GenerationError.None && placementAttempts < PlacementLimit)
             {
                 if (TryInstantiatingModule(moduleAsset, moduleCategory, isRequired)) return true;
                 placementAttempts++;
             }
-            
-            if (moduleHistory.Count <= 0) return false;
-            return TryBacktracking();
+
+            // Backtracking frees up space but places nothing, so the caller must retry
+            if (generationError == GenerationError.None && 0 < moduleHistory.Count)
+            {
+                TryBacktracking();
+            }
+
+            return false;
         }
         
         /// <summary>
@@ -505,7 +554,8 @@ namespace StarStoneStudio.DungeonGeneration
         {
             if (0 < moduleCount && connectableModules.Count <= 0)
             {
-                return TryBacktracking();
+                TryBacktracking();
+                return false;
             }
 
             var moduleInstance = Instantiate(moduleAsset.ModulePrefab, transform);
@@ -516,8 +566,8 @@ namespace StarStoneStudio.DungeonGeneration
             if (connectableModules.Count <= 0)
             {
                 connectableModules.Add(instantiatedModule);
-            
-                RecordModule(new HistoryEntry(moduleAsset, moduleCategory, instantiatedModule, null), isRequired);
+
+                RecordModule(new HistoryEntry(moduleAsset, moduleCategory, instantiatedModule, null, null, isRequired));
                 return true;
             }
 
@@ -536,15 +586,12 @@ namespace StarStoneStudio.DungeonGeneration
             instantiatedModule.RemoveConnectableEntrance(instantiatedEntrance);
             connectedModule.RemoveConnectableEntrance(connectedEntrance);
 
-            if (enableLoops)
-            {
-                ResolveSecondaryConnections(instantiatedModule);
-            }
-            
+            var secondaryEntrances = enableLoops ? ResolveSecondaryConnections(instantiatedModule) : null;
+
             RefreshConnections(instantiatedModule);
             RefreshConnections(connectedModule);
 
-            RecordModule(new HistoryEntry(moduleAsset, moduleCategory, instantiatedModule, connectedEntrance), isRequired);
+            RecordModule(new HistoryEntry(moduleAsset, moduleCategory, instantiatedModule, connectedEntrance, secondaryEntrances, isRequired));
             return true;
         }
 
@@ -593,8 +640,11 @@ namespace StarStoneStudio.DungeonGeneration
         /// <param name="targetModule">
         /// The <see cref="DungeonModule"/> whose entrances should be evaluated for secondary connections.
         /// </param>
-        private void ResolveSecondaryConnections(DungeonModule targetModule)
+        /// <returns>The entrances on other modules that were closed, so backtracking can reopen them.</returns>
+        private List<DungeonPassage> ResolveSecondaryConnections(DungeonModule targetModule)
         {
+            var closedEntrances = new List<DungeonPassage>();
+
             // Create a copy of the module's connectable entrances to prevent errors since we will be dynamically updating this list
             foreach (var originEntrance in targetModule.ConnectableEntrances.ToList())
             {
@@ -602,12 +652,15 @@ namespace StarStoneStudio.DungeonGeneration
                 if (connectableEntrance is null) continue;
 
                 var connectableModule = connectableEntrance.DungeonModule;
-                
+
                 targetModule.RemoveConnectableEntrance(originEntrance);
                 connectableModule.RemoveConnectableEntrance(connectableEntrance);
-                
+                closedEntrances.Add(connectableEntrance);
+
                 RefreshConnections(connectableModule);
             }
+
+            return closedEntrances;
         }
 
         /// <summary>
@@ -625,7 +678,7 @@ namespace StarStoneStudio.DungeonGeneration
             if (Physics.Raycast(raycastModule, out var raycastHit, 0.05f))
             {
                 var hitModule = raycastHit.collider.GetComponentInParent<DungeonModule>();
-                if (hitModule is null) return null;
+                if (hitModule == null) return null;
 
                 var originDirection = originEntrance.EntrancePoint.forward;
                 foreach (var candidateEntrance in hitModule.ConnectableEntrances)
@@ -659,15 +712,19 @@ namespace StarStoneStudio.DungeonGeneration
         /// Records the result of a successful module instantiation to the <see cref="moduleHistory"/>.
         /// </summary>
         /// <param name="historyEntry">The <see cref="HistoryEntry"/> describing the spawned module.</param>
-        /// <param name="isRequired">Indicates whether the module was a required one.</param>
-        private void RecordModule(HistoryEntry historyEntry, bool isRequired)
+        private void RecordModule(HistoryEntry historyEntry)
         {
             moduleCount++;
             moduleHistory.Push(historyEntry);
 
-            if (isRequired)
+            if (historyEntry.IsRequired)
             {
                 requiredModules[(historyEntry.ModuleAsset, historyEntry.ModuleCategory)]--;
+            }
+            else if (historyEntry.ModuleAsset.SpawnOnce)
+            {
+                // Required spawn-once modules were already reserved in RegisterRequiredModule
+                uniqueModules.Add(historyEntry.ModuleAsset);
             }
 
             categorizedModules[historyEntry.ModuleCategory]++;
@@ -698,26 +755,45 @@ namespace StarStoneStudio.DungeonGeneration
             moduleCount--;
             categorizedModules[historyEntry.ModuleCategory]--;
             
-            var dungeonLink = historyEntry.ConnectedEntrance;
-            if (dungeonLink is not null)
+            ReopenEntrance(historyEntry.ConnectedEntrance);
+
+            if (historyEntry.SecondaryEntrances != null)
             {
-                var connectedModule = dungeonLink.DungeonModule;
-                if (connectedModule is not null)
+                foreach (var secondaryEntrance in historyEntry.SecondaryEntrances)
                 {
-                    connectedModule.RegisterConnectableEntrance(dungeonLink);
-                    RefreshConnections(connectedModule);
+                    ReopenEntrance(secondaryEntrance);
                 }
             }
-            
-            if (requiredModules.ContainsKey((historyEntry.ModuleAsset, historyEntry.ModuleCategory)))
+
+            if (historyEntry.IsRequired)
             {
+                // Return it to the required pool; spawn-once modules stay reserved for the retry
                 requiredModules[(historyEntry.ModuleAsset, historyEntry.ModuleCategory)]++;
             }
-            
+            else if (historyEntry.ModuleAsset.SpawnOnce)
+            {
+                uniqueModules.Remove(historyEntry.ModuleAsset);
+            }
+
             DestroyModule(historyEntry.DungeonModule);
             
             backtrackAttempts++;
             return true;
+        }
+
+        /// <summary>
+        /// Returns a previously connected <see cref="DungeonPassage"/> to its module's pool of connectable entrances.
+        /// </summary>
+        /// <param name="dungeonPassage">The <see cref="DungeonPassage"/> to reopen, if any.</param>
+        private void ReopenEntrance(DungeonPassage dungeonPassage)
+        {
+            if (dungeonPassage is null) return;
+
+            var connectedModule = dungeonPassage.DungeonModule;
+            if (connectedModule == null) return;
+
+            connectedModule.RegisterConnectableEntrance(dungeonPassage);
+            RefreshConnections(connectedModule);
         }
 
         /// <summary>
@@ -727,7 +803,11 @@ namespace StarStoneStudio.DungeonGeneration
         private void DestroyModule(DungeonModule targetObject)
         {
             connectableModules?.Remove(targetObject);
-            
+
+            // Destroy is deferred to the end of the frame in Play Mode; deactivating removes the colliders
+            // from physics queries immediately so later overlap checks don't hit discarded modules
+            targetObject.gameObject.SetActive(false);
+
             #if UNITY_EDITOR
             
             if (Application.isPlaying == false)
@@ -759,7 +839,7 @@ namespace StarStoneStudio.DungeonGeneration
             }
             
             var navMeshSurface = gameObject.GetComponent<NavMeshSurface>();
-            if (navMeshSurface is null)
+            if (navMeshSurface == null)
             {
                 navMeshSurface = gameObject.AddComponent<NavMeshSurface>();
             }
@@ -775,13 +855,16 @@ namespace StarStoneStudio.DungeonGeneration
             for (var itemIndex = transform.childCount - 1; 0 <= itemIndex; itemIndex--)
             {
                 var targetModule = transform.GetChild(itemIndex).gameObject.GetComponent<DungeonModule>();
-                if (targetModule is null) continue;
-                
+                if (targetModule == null) continue;
+
                 DestroyModule(targetModule);
             }
-            
+
             var navMeshSurface = gameObject.GetComponent<NavMeshSurface>();
-            navMeshSurface?.RemoveData();
+            if (navMeshSurface != null)
+            {
+                navMeshSurface.RemoveData();
+            }
         }
         
         /// <summary>
@@ -794,6 +877,10 @@ namespace StarStoneStudio.DungeonGeneration
             InsufficientRequiredSpace = 201,
             InvalidHistory = 301,
             InvalidBacktracking = 302,
+            IterationLimitExceeded = 401,
+            CategoryPlacementFailed = 402,
+            RequiredSamplingFailed = 403,
+            NoOptionalCategories = 404,
             UnknownError = 999
         }
 
@@ -806,13 +893,17 @@ namespace StarStoneStudio.DungeonGeneration
             public readonly ModuleCategory ModuleCategory;
             public readonly DungeonModule DungeonModule;
             public readonly DungeonPassage ConnectedEntrance;
+            public readonly List<DungeonPassage> SecondaryEntrances;
+            public readonly bool IsRequired;
 
-            public HistoryEntry(ModuleAsset moduleAsset, ModuleCategory moduleCategory, DungeonModule dungeonModule, DungeonPassage connectedEntrance)
+            public HistoryEntry(ModuleAsset moduleAsset, ModuleCategory moduleCategory, DungeonModule dungeonModule, DungeonPassage connectedEntrance, List<DungeonPassage> secondaryEntrances, bool isRequired)
             {
                 ModuleAsset = moduleAsset;
                 ModuleCategory = moduleCategory;
                 DungeonModule = dungeonModule;
                 ConnectedEntrance = connectedEntrance;
+                SecondaryEntrances = secondaryEntrances;
+                IsRequired = isRequired;
             }
         }
     }
