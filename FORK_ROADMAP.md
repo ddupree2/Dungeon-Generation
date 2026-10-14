@@ -7,14 +7,14 @@ Work through the tiers in order. Each tier makes the next one safer to change.
 ## Ground rules
 
 - **Keep game-specific code out of this fork.** Room controllers, encounter logic, rewards, VFX, and forcefield visuals belong in the game project. This repo only knows about modules, doorways, and placement rules.
-- **Keep the original repo as a second remote** (`upstream`) so upstream fixes can be pulled in.
+- **This repo is maintained independently as a UPM package** (`com.starstonestudio.dungeongeneration`). Upstream changes are not tracked automatically; port anything useful by hand.
 - **Run the batch tester (Tier 2) before and after every generator change.**
 
 Main files referenced below:
 
-- `Assets/Code/Scripts/Dungeon/Behaviours/Runtime/DungeonGenerator.cs`
-- `Assets/Code/Scripts/Dungeon/Behaviours/Runtime/DungeonModule.cs`
-- `Assets/Code/Scripts/Dungeon/Algorithms/AliasProbability.cs`
+- `Runtime/Dungeon/Behaviours/Runtime/DungeonGenerator.cs`
+- `Runtime/Dungeon/Behaviours/Runtime/DungeonModule.cs`
+- `Runtime/Dungeon/Algorithms/AliasProbability.cs`
 
 ---
 

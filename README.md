@@ -3,6 +3,17 @@ A modular dungeon generation system built using C# and Unity that assembles pre-
 
 [![Demo Video](https://github.com/user-attachments/assets/ad0d322d-22ff-4d9c-8d5e-13c1c731f1fd)](https://www.youtube.com/watch?v=wXb4MGtWiRc)
 
+## Installation
+This repo is a Unity package (`com.starstonestudio.dungeongeneration`). Add it as a git submodule and reference it from `Packages/manifest.json`:
+
+```json
+"com.starstonestudio.dungeongeneration": "file:../DungeonGeneration"
+```
+
+Or install by git URL: `https://github.com/ddupree2/Dungeon-Generation.git`.
+
+The demo scene, sample theme and module prefabs can be imported from **Package Manager > Dungeon Generation > Samples**. The demo player needs the Input System and Cinemachine packages.
+
 ## System Overview
 This project was design to study the dungeon generation systems in titles such as *Lethal Company* and *R.E.P.O.*, which feature consistent, hand-crafted rooms reused across playthroughs.
 

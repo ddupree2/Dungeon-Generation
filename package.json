@@ -1,0 +1,20 @@
+{
+  "name": "com.starstonestudio.dungeongeneration",
+  "version": "0.1.0",
+  "displayName": "Dungeon Generation",
+  "description": "Modular, constraint-based dungeon generator that assembles hand-made module prefabs at their doorways using weighted sampling and backtracking.",
+  "unity": "6000.3",
+  "author": {
+    "name": "Star Stone Studio"
+  },
+  "dependencies": {
+    "com.unity.ai.navigation": "2.0.9"
+  },
+  "samples": [
+    {
+      "displayName": "Dungeon Demo",
+      "description": "Demo scene, sample theme, module prefabs and a first-person player. Requires the Input System and Cinemachine packages.",
+      "path": "Samples~/DungeonDemo"
+    }
+  ]
+}
