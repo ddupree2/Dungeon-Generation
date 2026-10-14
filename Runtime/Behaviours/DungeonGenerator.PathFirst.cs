@@ -119,7 +119,7 @@ namespace StarStoneStudio.DungeonGeneration
 
         /// <summary>
         /// Grows the main path from the Start module: N MainPath rooms, then Boss, then End. When a unit can't be placed, the
-        /// previous main-path unit is removed and placed again (backtracking pops main-path units only).
+        /// previous main-path unit is removed and placed again (backtracking pops main-path units only; if nothing fits off Start, Start itself is placed again).
         /// </summary>
         /// <returns>The MainPath rooms that were placed, in order.</returns>
         private List<DungeonModule> GenerateMainPath()
@@ -145,21 +145,27 @@ namespace StarStoneStudio.DungeonGeneration
                     continue;
                 }
 
-                // The Start module itself is never removed
-                if (placedUnits.Count <= 0)
-                {
-                    generationError = GenerationError.MainPathFailed;
-                    break;
-                }
-
                 if (backtrackLimit <= backtrackAttempts)
                 {
                     generationError = GenerationError.MainPathFailed;
                     break;
                 }
 
-                RemoveUnit(placedUnits.Pop());
                 backtrackAttempts++;
+
+                if (0 < placedUnits.Count)
+                {
+                    RemoveUnit(placedUnits.Pop());
+                    continue;
+                }
+
+                // Nothing fits off the Start module (e.g. every retry picked a hallway that turns back into it): place it again
+                PopModule();
+                if (!PlaceStartModule())
+                {
+                    generationError = GenerationError.MissingRoleCategory;
+                    break;
+                }
             }
 
             return placedUnits

@@ -19,7 +19,8 @@ namespace StarStoneStudio.DungeonGeneration
     {
         private const int PlacementLimit = 25;
         private const int SamplingLimit = 100;
-        private const float PlacementThreshold = -1f;
+        private const float PlacementThreshold = -0.99f;
+        private const float DoorwayTolerance = 0.1f;
         private const float RequiredChance = 0.5f;
 
         [SerializeField]
@@ -859,8 +860,12 @@ namespace StarStoneStudio.DungeonGeneration
                 var originDirection = originEntrance.EntrancePoint.forward;
                 foreach (var candidateEntrance in hitModule.ConnectableEntrances)
                 {
+                    // A loop needs doorways that face each other and actually meet, not just any opposite-facing doorway on the module
                     var candidateDirection = candidateEntrance.EntrancePoint.forward;
-                    if (Vector3.Dot(candidateDirection, originDirection) < PlacementThreshold) return candidateEntrance;
+                    var facesOrigin = Vector3.Dot(candidateDirection, originDirection) < PlacementThreshold;
+                    var meetsOrigin = Vector3.Distance(candidateEntrance.EntrancePoint.position, originEntrance.EntrancePoint.position) < DoorwayTolerance;
+
+                    if (facesOrigin && meetsOrigin) return candidateEntrance;
                 }
             }
             

@@ -165,3 +165,21 @@ Rules for authoring room prefabs, so the game code and the generator don't fight
 - [ ] Plan the layout as data first and instantiate only the final rooms, removing the instantiate-and-destroy cost and the physics dependency.
 - [x] Re-enable loops once backtracking handles secondary connections correctly. (Tier 1 #4; path-first connects loops after the structure is built.)
 - [ ] Generate over several frames (coroutine or async) for large layouts.
+
+---
+
+## Verification log
+
+**2026-10-14, headless batch run** (Unity 6000.6.1f1, scratch project, `Create Test Content` modules, `DungeonBatchRunner`):
+
+| Scenario | Seeds | Succeeded | Rule violations | Nondeterministic | Backtracks avg/max | ms avg/max |
+|---|---|---|---|---|---|---|
+| Path-first, defaults (main 3–5, branches 1–3, depth 1–2, connectors 1–2) | 300 | 100% | 0 | 0 | 0.1 / 2 | 12 / 109 |
+| Path-first, loops enabled | 200 | 100% | 0 | 0 | 0.1 / 1 | 13 / 58 |
+| Path-first, long (main 8–12, branches 3–5, depth 1–3) | 150 | 100% | 0 | not checked | 0.3 / 9 | 37 / 150 |
+| Path-first, connectors 0–1 | 150 | 100% | 0 | not checked | 0.1 / 2 | 15 / 101 |
+| Weighted (regression, same content) | 150 | 100% | 0 | not checked | 26.9 / 73 | 37 / 312 |
+
+Generation leaves `UnityEngine.Random` untouched. Loops were not exercised: with the test content, facing doorways almost never meet (one Room–Room pair in 30 layouts, correctly denied by the rules).
+
+Fixed by this run: a failed first unit off Start used to fail the whole pass (1 in 150 with connectors 0–1, when every retry picked a corner hallway that turns back into Start); Start is now placed again within the backtrack budget. Loop detection required `dot < -1` (never true) and accepted any opposite-facing doorway on the hit module; it now needs doorways that face each other (`dot < -0.99`) within 0.1 units.
