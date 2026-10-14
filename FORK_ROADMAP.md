@@ -137,22 +137,25 @@ Currently any module can attach to any other module, so rooms end up packed dire
 
 ## Tier 4: Room prefab conventions
 
-Rules for authoring room prefabs, so the game code and the generator don't fight each other.
+Rules for authoring room prefabs, so the game code and the generator don't fight each other. Documented in the README under **Room Prefab Conventions**.
 
 ### 11. No logic in `Awake` or `Start` on room scripts
 
-- [ ] Every placement attempt instantiates the full prefab and destroys it if it doesn't fit, up to 25 attempts per placement. `Awake` and `Start` run on rooms that get thrown away.
-- [ ] **Rule:** room controllers do nothing in `Awake` or `Start`. After generation succeeds, the generator calls `Activate()` (via an interface such as `IDungeonModuleListener`) on each final module.
-- [ ] Spawning rooms inactive does **not** work as an alternative, because inactive colliders are ignored by the overlap check.
+- [x] Every placement attempt instantiates the full prefab and destroys it if it doesn't fit, up to 25 attempts per placement. `Awake` and `Start` run on rooms that get thrown away.
+- [x] **Rule:** room controllers do nothing in `Awake` or `Start`. After generation succeeds, the generator calls `Activate()` (via an interface such as `IDungeonModuleListener`) on each final module.
+- [x] Spawning rooms inactive does **not** work as an alternative, because inactive colliders are ignored by the overlap check.
+- [x] `IDungeonModuleListener.Activate(module, generator)` is called on every listener in each final module after a successful pass in Play Mode (not in edit mode or batch tests).
 
 ### 12. Bounds colliders
 
-- [ ] Make bounds colliders slightly smaller than the room's real footprint, so modules meeting at a doorway aren't counted as overlapping.
-- [ ] Put bounds colliders on a dedicated layer (the generator's `placementLayers`) that doesn't collide with the player or enemies.
+- [x] Make bounds colliders slightly smaller than the room's real footprint, so modules meeting at a doorway aren't counted as overlapping.
+- [x] Put bounds colliders on a dedicated layer (the generator's `placementLayers`) that doesn't collide with the player or enemies.
+- [x] The batch tester reports bounds colliders outside the placement layers and any overlapping bounds.
 
 ### 13. Doorway orientation
 
-- [ ] Keep all doorway entrance points rotated in 90° steps around Y. Alignment handles any angle, but the overlap check uses axis-aligned bounds, which are only accurate at 90° rotations.
+- [x] Keep all doorway entrance points rotated in 90° steps around Y. Alignment handles any angle, but the overlap check uses axis-aligned bounds, which are only accurate at 90° rotations.
+- [x] `DungeonModule.OnValidate` warns about doorways that aren't.
 
 ---
 
@@ -160,5 +163,5 @@ Rules for authoring room prefabs, so the game code and the generator don't fight
 
 - [ ] Doorway sockets (per-doorway tags such as size or type), checked alongside category rules, so wide gates only connect to wide gates.
 - [ ] Plan the layout as data first and instantiate only the final rooms, removing the instantiate-and-destroy cost and the physics dependency.
-- [ ] Re-enable loops once backtracking handles secondary connections correctly.
+- [x] Re-enable loops once backtracking handles secondary connections correctly. (Tier 1 #4; path-first connects loops after the structure is built.)
 - [ ] Generate over several frames (coroutine or async) for large layouts.

@@ -79,5 +79,27 @@ The generator then enters a loop that continues until the target module count is
 - A success callback is triggered (if configured)
 - The resulting dungeon is fully ocnnected and respects all constraints
 
+## Path-First Layouts
+Set a theme's **Layout Mode** to **Path First** to build a guaranteed **Start → main path → Boss → End** structure with optional side branches, instead of the weighted "attach anywhere" layout described above.
+
+1. Give every module category a **Role**: `Start`, `MainPath`, `Boss`, `End`, `Branch` or `Connector` (hallways and other pieces between rooms).
+2. Set the theme's path settings: main path length, branch count, branch depth (all counted in rooms) and connectors between rooms.
+3. Optionally create **Dungeon Connection Rules** (Create menu) and assign them to the theme. Rules name categories by title and are symmetric. For example, with a default of *allow*, deny `Room–Room`, `Room–Boss` and `Room–Start` and allow `Boss–End`: every room is reached through hallways and the boss exits straight into the end room.
+
+Rooms are placed as units (the room plus the connectors leading into it), so a branch never ends in a dead-end hallway, and backtracking only ever pops main-path units. Mark a `Branch` category **Spawn Required** to guarantee it appears (shops, for example).
+
+After generation, every placed `DungeonModule` exposes its `Category`, `Role`, `ParentModule`, `Depth` (rooms from Start, not counting connectors) and `IsMainPath`, and the generator exposes `PlacedModules`, `LoopConnections` and `LastResult` (including the seed). Use `Depth` to scale encounter difficulty.
+
+### Testing
+`Tools > Dungeon Generation > Batch Tester` (or **Open Batch Tester** on the generator) generates hundreds of seeds and reports failures, failure reasons, backtracking, timing and any layout rule violations. Every failure lists its seed with a **Replay** button. Run it before and after every generator change. `Tools > Dungeon Generation > Create Test Content` builds a set of placeholder primitive modules with a path-first theme and connection rules to test against.
+
+## Room Prefab Conventions
+Rules for authoring module prefabs so game code and the generator don't fight each other.
+
+- **No logic in `Awake` or `Start` on room scripts.** Every placement attempt instantiates the full prefab and destroys it if it doesn't fit, so `Awake` and `Start` also run on rooms that get thrown away. Implement `IDungeonModuleListener` instead: after generation succeeds in Play Mode the generator calls `Activate(module, generator)` on every listener in each final module. Spawning rooms inactive is not an alternative, because inactive colliders are ignored by the overlap check.
+- **Bounds colliders** should be slightly smaller than the room's real footprint, so modules meeting at a doorway aren't counted as overlapping, and should sit on a dedicated layer included in the generator's **Placement Layers** that doesn't collide with the player or enemies. The batch tester reports bounds colliders outside the placement layers.
+- **Doorways** should be rotated in 90° steps around Y only. Alignment handles any angle, but the overlap check uses axis-aligned bounds. `DungeonModule` warns about doorways that break this.
+- **Boss rooms** need at least two doorways (entrance and exit), and any room that something attaches to next needs a spare doorway; the generator rejects modules that would leave none.
+
 ## License
 This project is licensed under the MIT License. For more information, see the LICENSE file.
