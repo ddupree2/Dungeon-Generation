@@ -33,6 +33,16 @@ namespace StarStoneStudio.DungeonGeneration.Editor
         /// Serialized property for the collection of dungeon module entries.
         /// </summary>
         private SerializedProperty dataProperty;
+
+        /// <summary>
+        /// Serialized property for how the theme assembles its modules.
+        /// </summary>
+        private SerializedProperty layoutModeProperty;
+
+        /// <summary>
+        /// Serialized properties for the path-first settings, shown only for path-first themes.
+        /// </summary>
+        private SerializedProperty[] pathSettingsProperties;
         
         /// <summary>
         /// Initializes references to <see cref="DungeonTheme"/> immediate serialized properties.
@@ -46,6 +56,16 @@ namespace StarStoneStudio.DungeonGeneration.Editor
             maximumModulesProperty = serializedObject.FindProperty("maximumModules");
             minimumModulesProperty = serializedObject.FindProperty("minimumModules");
             dataProperty = serializedObject.FindProperty("moduleData");
+            layoutModeProperty = serializedObject.FindProperty("layoutMode");
+
+            pathSettingsProperties = new[]
+            {
+                serializedObject.FindProperty("mainPathLength"),
+                serializedObject.FindProperty("branchCount"),
+                serializedObject.FindProperty("branchDepth"),
+                serializedObject.FindProperty("connectorsBetweenRooms"),
+                serializedObject.FindProperty("connectionRules")
+            };
         }
 
         /// <summary>
@@ -65,8 +85,21 @@ namespace StarStoneStudio.DungeonGeneration.Editor
                 }
             };
 
-            var maximumModulesField = new PropertyField(maximumModulesProperty);
-            var minimumModulesField = new PropertyField(minimumModulesProperty);
+            var layoutModeField = new PropertyField(layoutModeProperty);
+
+            // Module counts only drive weighted layouts; path settings only drive path-first layouts
+            var weightedSettings = new VisualElement();
+            weightedSettings.Add(new PropertyField(maximumModulesProperty));
+            weightedSettings.Add(new PropertyField(minimumModulesProperty));
+
+            var pathSettings = new VisualElement();
+            foreach (var pathSettingsProperty in pathSettingsProperties)
+            {
+                pathSettings.Add(new PropertyField(pathSettingsProperty));
+            }
+
+            RefreshLayoutSettings(weightedSettings, pathSettings);
+            layoutModeField.TrackPropertyValue(layoutModeProperty, _ => RefreshLayoutSettings(weightedSettings, pathSettings));
             
             var dataField = DataField();
             var weightsField = WeightsField();
@@ -79,14 +112,26 @@ namespace StarStoneStudio.DungeonGeneration.Editor
             });
             
             rootElement.Add(titleField);
-            rootElement.Add(maximumModulesField);
-            rootElement.Add(minimumModulesField);
+            rootElement.Add(layoutModeField);
+            rootElement.Add(weightedSettings);
+            rootElement.Add(pathSettings);
             rootElement.Add(dataField);
             rootElement.Add(weightsField);
             
             return rootElement;
         }
         
+        /// <summary>
+        /// Shows the settings that apply to the theme's current <see cref="LayoutMode"/> and hides the rest.
+        /// </summary>
+        private void RefreshLayoutSettings(VisualElement weightedSettings, VisualElement pathSettings)
+        {
+            var isPathFirst = layoutModeProperty.enumValueIndex == (int)LayoutMode.PathFirst;
+
+            weightedSettings.style.display = isPathFirst ? DisplayStyle.None : DisplayStyle.Flex;
+            pathSettings.style.display = isPathFirst ? DisplayStyle.Flex : DisplayStyle.None;
+        }
+
         /// <summary>
         /// Creates and configures a <see cref="MultiColumnListView"/> element for displaying and editing the serialized <see cref="dataProperty"/> collection.
         /// </summary>

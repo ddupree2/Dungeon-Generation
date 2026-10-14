@@ -11,10 +11,11 @@ namespace StarStoneStudio.DungeonGeneration
 {
     /// <summary>
     /// Procedurally constructs a dungeon layout at runtime using a selected <see cref="DungeonTheme"/>.
-    /// This generator selects module categories and modules based on weighted probabilities and spawns them into the scene to create a randomized, replayable dungeon experience.
+    /// Weighted themes attach weighted categories to any open doorway; path-first themes (see DungeonGenerator.PathFirst.cs)
+    /// build a guaranteed Start → main path → Boss → End structure with optional branches.
     /// </summary>
     [ExecuteAlways]
-    public class DungeonGenerator : MonoBehaviour
+    public partial class DungeonGenerator : MonoBehaviour
     {
         private const int PlacementLimit = 25;
         private const int SamplingLimit = 100;
@@ -106,6 +107,21 @@ namespace StarStoneStudio.DungeonGeneration
         /// Spawn-once <see cref="ModuleAsset"/> instances that are already placed or reserved as required modules.
         /// </summary>
         private List<ModuleAsset> uniqueModules;
+
+        /// <summary>
+        /// The module assets belonging to each category of the selected theme.
+        /// </summary>
+        private Dictionary<ModuleCategory, ModuleAsset[]> categoryAssets;
+
+        /// <summary>
+        /// Every module currently placed by this pass, in placement order (parents always come before the modules attached to them).
+        /// </summary>
+        private readonly List<DungeonModule> placedModules = new();
+
+        /// <summary>
+        /// Doorway connections made between already-placed modules when loops are enabled.
+        /// </summary>
+        private readonly List<ModuleConnection> loopConnections = new();
         
         /// <summary>
         /// Tracks the number of backtracking attempts made during generation.
@@ -131,6 +147,27 @@ namespace StarStoneStudio.DungeonGeneration
         /// Raised after every non-silent generation pass, whether it succeeded or failed.
         /// </summary>
         public event Action<GenerationResult> GenerationCompleted;
+
+        /// <summary>
+        /// The theme chosen for the most recent generation pass.
+        /// </summary>
+        public DungeonTheme SelectedTheme => selectedTheme;
+
+        /// <summary>
+        /// Every module in the current layout, in placement order. Each module's <see cref="DungeonModule.ParentModule"/>
+        /// describes the doorway connection it was placed through.
+        /// </summary>
+        public IReadOnlyList<DungeonModule> PlacedModules => placedModules;
+
+        /// <summary>
+        /// Extra doorway connections between modules made when loops are enabled.
+        /// </summary>
+        public IReadOnlyList<ModuleConnection> LoopConnections => loopConnections;
+
+        /// <summary>
+        /// The layers checked for overlaps when placing modules. Module bounds colliders should be on one of these layers.
+        /// </summary>
+        public LayerMask PlacementLayers => placementLayers;
 
         /// <summary>
         /// Creates the <see cref="AliasProbability{TObject}"/> table from the current theme weights provided by <see cref="possibleThemes"/>.
@@ -172,6 +209,84 @@ namespace StarStoneStudio.DungeonGeneration
             ResetEnvironment();
             InitializeGeneration(resolvedSeed);
 
+            if (generationError == GenerationError.None)
+            {
+                if (selectedTheme.LayoutMode == LayoutMode.PathFirst)
+                {
+                    GeneratePathFirstLayout();
+                }
+                else
+                {
+                    GenerateWeightedLayout();
+                }
+            }
+
+
+            // Close any remaining open entrances using each passage's closed state
+            foreach (var placedModule in placedModules)
+            {
+                placedModule.ToggleConnectableEntrances(false);
+            }
+
+            // Path-first layouts are sized by their structure rather than a module count
+            if (selectedTheme != null && selectedTheme.LayoutMode == LayoutMode.PathFirst)
+            {
+                moduleLimit = moduleCount;
+            }
+
+            if (generationError == GenerationError.None && moduleCount < moduleLimit)
+            {
+                generationError = GenerationError.UnknownError;
+            }
+
+            AssignDepths();
+
+            generationTimer.Stop();
+            LastResult = new GenerationResult(
+                resolvedSeed,
+                generationError,
+                selectedTheme != null ? selectedTheme.ThemeTitle : null,
+                moduleCount,
+                moduleLimit,
+                backtrackAttempts,
+                generationTimer.Elapsed.TotalMilliseconds
+            );
+
+            if (silent) return LastResult;
+
+            #if UNITY_EDITOR
+
+            if (LastResult.Succeeded)
+            {
+                Debug.Log($"<color=green>[{name}] <b>Dungeon Generation Complete: {moduleLimit}</b> (seed {resolvedSeed})</color>", gameObject);
+            }
+            else
+            {
+                Debug.LogError($"[{name}] Generation Failed (seed {resolvedSeed}): {GenerationResult.Describe(generationError)}", gameObject);
+            }
+
+            #endif
+
+            if (LastResult.Succeeded)
+            {
+                ActivateModules();
+                onGenerationSuccess.Invoke();
+            }
+            else
+            {
+                onGenerationFailed.Invoke();
+            }
+
+            GenerationCompleted?.Invoke(LastResult);
+            return LastResult;
+        }
+
+        /// <summary>
+        /// Fills the layout for a <see cref="LayoutMode.Weighted"/> theme: samples weighted categories and attaches their modules to
+        /// any open doorway until the module count is reached, placing required modules along the way.
+        /// </summary>
+        private void GenerateWeightedLayout()
+        {
             // Every loop below is capped so an unsatisfiable theme fails with an error instead of freezing the editor
             var iterationCount = 0;
             var iterationLimit = moduleLimit * PlacementLimit;
@@ -255,55 +370,50 @@ namespace StarStoneStudio.DungeonGeneration
                     InstantiateWeightedModule(chosenCategory);
                 }
             }
+        }
 
-            // Disable any remaining open entrances
-            foreach (var connectableModule in connectableModules)
+        /// <summary>
+        /// Sets each placed module's <see cref="DungeonModule.Depth"/>: rooms from the first module, not counting connectors.
+        /// </summary>
+        private void AssignDepths()
+        {
+            // Placement order guarantees every parent is visited before the modules attached to it
+            foreach (var placedModule in placedModules)
             {
-                connectableModule.ToggleConnectableEntrances(false);
-            }
+                var parentModule = placedModule.ParentModule;
+                if (parentModule == null)
+                {
+                    placedModule.Depth = 0;
+                    continue;
+                }
 
-            if (generationError == GenerationError.None && moduleCount < moduleLimit)
+                placedModule.Depth = parentModule.Depth + (placedModule.Role == ModuleRole.Connector ? 0 : 1);
+            }
+        }
+
+        /// <summary>
+        /// Tells every <see cref="IDungeonModuleListener"/> on the final modules that generation succeeded, so room logic can start.
+        /// Only runs in Play Mode; layouts generated in the editor are left inert.
+        /// </summary>
+        private void ActivateModules()
+        {
+            if (!Application.isPlaying) return;
+
+            foreach (var placedModule in placedModules)
             {
-                generationError = GenerationError.UnknownError;
+                foreach (var moduleListener in placedModule.GetComponentsInChildren<IDungeonModuleListener>(true))
+                {
+                    moduleListener.Activate(placedModule, this);
+                }
             }
+        }
 
-            generationTimer.Stop();
-            LastResult = new GenerationResult(
-                resolvedSeed,
-                generationError,
-                selectedTheme != null ? selectedTheme.ThemeTitle : null,
-                moduleCount,
-                moduleLimit,
-                backtrackAttempts,
-                generationTimer.Elapsed.TotalMilliseconds
-            );
-
-            if (silent) return LastResult;
-
-            #if UNITY_EDITOR
-
-            if (LastResult.Succeeded)
-            {
-                Debug.Log($"<color=green>[{name}] <b>Dungeon Generation Complete: {moduleLimit}</b> (seed {resolvedSeed})</color>", gameObject);
-            }
-            else
-            {
-                Debug.LogError($"[{name}] Generation Failed (seed {resolvedSeed}): {GenerationResult.Describe(generationError)}", gameObject);
-            }
-
-            #endif
-
-            if (LastResult.Succeeded)
-            {
-                onGenerationSuccess.Invoke();
-            }
-            else
-            {
-                onGenerationFailed.Invoke();
-            }
-
-            GenerationCompleted?.Invoke(LastResult);
-            return LastResult;
+        /// <summary>
+        /// Whether modules from the two categories may connect at a doorway under the selected theme's connection rules.
+        /// </summary>
+        private bool CanConnect(ModuleCategory moduleCategory, ModuleCategory otherCategory)
+        {
+            return selectedTheme.CanConnect(moduleCategory, otherCategory);
         }
 
         /// <summary>
@@ -347,25 +457,36 @@ namespace StarStoneStudio.DungeonGeneration
             selectedTheme = themeProbabilities.Sample(randomSource);
 
             moduleCount = 0;
-            moduleLimit = NextInRange(selectedTheme.MinimumModules, selectedTheme.MaximumModules + 1);
+            moduleLimit = 0;
             moduleHistory = new Stack<HistoryEntry>();
             connectableModules = new List<DungeonModule>();
-            
-            // Create alias probability lookup tables for drawing random values in O(1) time
-            InitializeCategoryProbabilities();
-            InitializeCategorizedModuleProbabilities();
-
+            uniqueModules = new List<ModuleAsset>();
+            requiredModules = new FrequencyDictionary<(ModuleAsset, ModuleCategory)>();
             categorizedModules = new FrequencyDictionary<ModuleCategory>();
+            categoryAssets = new Dictionary<ModuleCategory, ModuleAsset[]>();
 
             foreach (var moduleElement in selectedTheme.ModuleData)
             {
                 categorizedModules[moduleElement.ModuleCategory] = 0;
+                categoryAssets[moduleElement.ModuleCategory] = moduleElement.ModuleAssets;
             }
 
-            InitializeRequiredModules();
-            
-            // Reset backtracking counters and limits before starting generation
             backtrackAttempts = 0;
+
+            if (selectedTheme.LayoutMode == LayoutMode.PathFirst)
+            {
+                InitializePathFirst();
+                return;
+            }
+
+            moduleLimit = NextInRange(selectedTheme.MinimumModules, selectedTheme.MaximumModules + 1);
+
+            // Create alias probability lookup tables for drawing random values in O(1) time
+            InitializeCategoryProbabilities();
+            InitializeCategorizedModuleProbabilities();
+
+            InitializeRequiredModules();
+
             backtrackLimit = moduleLimit * PlacementLimit;
         }
 
@@ -420,9 +541,6 @@ namespace StarStoneStudio.DungeonGeneration
         /// </summary>
         private void InitializeRequiredModules()
         {
-            requiredModules = new FrequencyDictionary<(ModuleAsset, ModuleCategory)>();
-            uniqueModules = new List<ModuleAsset>();
-
             foreach (var moduleElement in selectedTheme.ModuleData)
             {
                 var openSlots = moduleLimit - requiredModules.Count;
@@ -619,14 +737,21 @@ namespace StarStoneStudio.DungeonGeneration
                 return true;
             }
 
-            var connectedModule = connectableModules[randomSource.Next(0, connectableModules.Count)];
+            // Only attach to modules the connection rules allow next to this category
+            var compatibleModules = connectableModules.Where(connectableModule => CanConnect(connectableModule.Category, moduleCategory)).ToList();
+            if (compatibleModules.Count <= 0)
+            {
+                DestroyModule(instantiatedModule);
+                return false;
+            }
+
+            var connectedModule = compatibleModules[randomSource.Next(0, compatibleModules.Count)];
             var connectedEntrance = connectedModule.SelectConnectableEntrance(randomSource);
 
             AlignModules(moduleInstance.transform, instantiatedEntrance.EntrancePoint, connectedEntrance.EntrancePoint);
 
             if (ContainsIntersections(instantiatedModule))
             {
-                // DestroyModule(moduleInstance);
                 DestroyModule(instantiatedModule);
                 return false;
             }
@@ -634,7 +759,7 @@ namespace StarStoneStudio.DungeonGeneration
             instantiatedModule.RemoveConnectableEntrance(instantiatedEntrance);
             connectedModule.RemoveConnectableEntrance(connectedEntrance);
 
-            var secondaryEntrances = enableLoops ? ResolveSecondaryConnections(instantiatedModule) : null;
+            var secondaryEntrances = enableLoops ? ResolveSecondaryConnections(instantiatedModule, moduleCategory) : null;
 
             RefreshConnections(instantiatedModule);
             RefreshConnections(connectedModule);
@@ -688,8 +813,9 @@ namespace StarStoneStudio.DungeonGeneration
         /// <param name="targetModule">
         /// The <see cref="DungeonModule"/> whose entrances should be evaluated for secondary connections.
         /// </param>
+        /// <param name="targetCategory">The category of <paramref name="targetModule"/>, checked against the connection rules.</param>
         /// <returns>The entrances on other modules that were closed, so backtracking can reopen them.</returns>
-        private List<DungeonPassage> ResolveSecondaryConnections(DungeonModule targetModule)
+        private List<DungeonPassage> ResolveSecondaryConnections(DungeonModule targetModule, ModuleCategory targetCategory)
         {
             var closedEntrances = new List<DungeonPassage>();
 
@@ -700,10 +826,12 @@ namespace StarStoneStudio.DungeonGeneration
                 if (connectableEntrance is null) continue;
 
                 var connectableModule = connectableEntrance.DungeonModule;
+                if (!CanConnect(targetCategory, connectableModule.Category)) continue;
 
                 targetModule.RemoveConnectableEntrance(originEntrance);
                 connectableModule.RemoveConnectableEntrance(connectableEntrance);
                 closedEntrances.Add(connectableEntrance);
+                loopConnections.Add(new ModuleConnection(targetModule, connectableModule));
 
                 RefreshConnections(connectableModule);
             }
@@ -726,7 +854,7 @@ namespace StarStoneStudio.DungeonGeneration
             if (Physics.Raycast(raycastModule, out var raycastHit, 0.05f))
             {
                 var hitModule = raycastHit.collider.GetComponentInParent<DungeonModule>();
-                if (hitModule == null) return null;
+                if (hitModule == null || hitModule == originEntrance.DungeonModule) return null;
 
                 var originDirection = originEntrance.EntrancePoint.forward;
                 foreach (var candidateEntrance in hitModule.ConnectableEntrances)
@@ -764,6 +892,9 @@ namespace StarStoneStudio.DungeonGeneration
         {
             moduleCount++;
             moduleHistory.Push(historyEntry);
+            placedModules.Add(historyEntry.DungeonModule);
+
+            historyEntry.DungeonModule.AssignPlacement(historyEntry.ModuleCategory, historyEntry.ConnectedEntrance?.DungeonModule);
 
             if (historyEntry.IsRequired)
             {
@@ -798,6 +929,18 @@ namespace StarStoneStudio.DungeonGeneration
                 return false;
             }
 
+            PopModule();
+
+            backtrackAttempts++;
+            return true;
+        }
+
+        /// <summary>
+        /// Removes the most recently placed module and undoes everything recorded for it: counts, spawn-once usage and the
+        /// doorways it closed. Does not count as a backtracking attempt.
+        /// </summary>
+        private void PopModule()
+        {
             var historyEntry = moduleHistory.Pop();
 
             moduleCount--;
@@ -824,9 +967,6 @@ namespace StarStoneStudio.DungeonGeneration
             }
 
             DestroyModule(historyEntry.DungeonModule);
-            
-            backtrackAttempts++;
-            return true;
         }
 
         /// <summary>
@@ -851,6 +991,8 @@ namespace StarStoneStudio.DungeonGeneration
         private void DestroyModule(DungeonModule targetObject)
         {
             connectableModules?.Remove(targetObject);
+            placedModules.Remove(targetObject);
+            loopConnections.RemoveAll(loopConnection => loopConnection.Involves(targetObject));
 
             // Destroy is deferred to the end of the frame in Play Mode; deactivating removes the colliders
             // from physics queries immediately so later overlap checks don't hit discarded modules
@@ -900,6 +1042,9 @@ namespace StarStoneStudio.DungeonGeneration
         /// </summary>
         public void ResetEnvironment()
         {
+            placedModules.Clear();
+            loopConnections.Clear();
+
             for (var itemIndex = transform.childCount - 1; 0 <= itemIndex; itemIndex--)
             {
                 var targetModule = transform.GetChild(itemIndex).gameObject.GetComponent<DungeonModule>();

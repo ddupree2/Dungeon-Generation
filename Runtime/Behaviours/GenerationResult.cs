@@ -14,6 +14,9 @@ namespace StarStoneStudio.DungeonGeneration
         CategoryPlacementFailed = 402,
         RequiredSamplingFailed = 403,
         NoOptionalCategories = 404,
+        MissingRoleCategory = 501,
+        MainPathFailed = 502,
+        RequiredBranchFailed = 503,
         UnknownError = 999
     }
 
@@ -91,6 +94,9 @@ namespace StarStoneStudio.DungeonGeneration
                 GenerationError.CategoryPlacementFailed => "Could not place enough modules for a spawn-limited category.",
                 GenerationError.RequiredSamplingFailed => "Could not reserve enough modules for a required category. It may not have enough spawn-once modules.",
                 GenerationError.NoOptionalCategories => "The theme has no optional categories to fill the remaining module slots.",
+                GenerationError.MissingRoleCategory => "Path-first themes need categories with the Start, MainPath, Boss and End roles, each with at least one usable module.",
+                GenerationError.MainPathFailed => "Could not fit the main path (Start → main path → Boss → End), even after backtracking.",
+                GenerationError.RequiredBranchFailed => "Could not place every required Branch category off the main path.",
                 _ => "Unknown error."
             };
         }

@@ -81,38 +81,45 @@ Three loops can spin forever with no exit condition:
 
 Replaces the current main loop, which attaches each new module to *any* open doorway and produces blob-shaped layouts with no guaranteed order.
 
+> **Implemented as a theme setting.** `DungeonTheme.LayoutMode` is `Weighted` (the original loop, still the default so existing themes keep working) or `PathFirst`. Path-first lives in `Runtime/Behaviours/DungeonGenerator.PathFirst.cs`. The weighted mode can be removed once nothing uses it.
+
 ### 7. Module roles
 
-- [ ] Add a role to module categories: **`Start`, `MainPath`, `Boss`, `End`, `Branch`, `Connector`**.
-- [ ] Theme settings: main path length (min/max, counted in rooms, not connectors), branch count (min/max), branch depth (min/max), connectors between rooms (min/max).
+- [x] Add a role to module categories: **`Start`, `MainPath`, `Boss`, `End`, `Branch`, `Connector`**.
+- [x] Theme settings: main path length (min/max, counted in rooms, not connectors), branch count (min/max), branch depth (min/max), connectors between rooms (min/max).
+- [x] `ModuleRole.None` is the default; weighted themes ignore roles. Path-first themes are validated to have Start, MainPath, Boss and End categories.
 
 ### 8. Generation phases
 
-1. [ ] **Start:** place one `Start` module at the origin.
-2. [ ] **Main path:** choose a length N. Each new `MainPath` module attaches to an open doorway on the **previous main-path module**, not any module. This is the change that turns the blob into a path. Backtracking pops main-path modules only.
-3. [ ] **Boss:** attach a `Boss` module to the last main-path module. Boss prefabs must have at least two doorways (entrance and exit).
-4. [ ] **End:** attach an `End` module to the boss's remaining doorway. If boss or end placement fails, backtrack one or two main-path modules and retry.
-5. [ ] **Branches:** for leftover open doorways on main-path modules, grow short branches (1–3 modules) from `Branch` categories (shops, treasure, optional fights). If a branch doesn't fit, skip it; no backtracking needed.
-6. [ ] **Close remaining doorways** using each passage's closed state.
+1. [x] **Start:** place one `Start` module at the origin.
+2. [x] **Main path:** choose a length N. Each new `MainPath` module attaches to an open doorway on the **previous main-path module**, not any module. This is the change that turns the blob into a path. Backtracking pops main-path modules only.
+3. [x] **Boss:** attach a `Boss` module to the last main-path module. Boss prefabs must have at least two doorways (entrance and exit).
+4. [x] **End:** attach an `End` module to the boss's remaining doorway. If boss or end placement fails, backtrack one or two main-path modules and retry.
+5. [x] **Branches:** for leftover open doorways on main-path modules, grow short branches (1–3 modules) from `Branch` categories (shops, treasure, optional fights). If a branch doesn't fit, skip it; no backtracking needed.
+6. [x] **Close remaining doorways** using each passage's closed state.
+
+Notes: required `Branch` categories (`SpawnRequired`, repeated by `SpawnMinimum`) are placed first and may add branches beyond the branch count; if one can't be placed the pass fails with `RequiredBranchFailed`. Branch roots are `MainPath` rooms. With loops enabled, touching doorways are connected after the structure is complete (rules applied), so loops never need undoing.
 
 ### 9. Connection rules
 
 Currently any module can attach to any other module, so rooms end up packed directly against each other. Add DunGen-style connection rules that control which categories may connect at a doorway.
 
 **Rules asset**
-- [ ] `ConnectionRules` ScriptableObject referenced by the theme.
-- [ ] Default policy: **allow unless denied** or **deny unless allowed**.
-- [ ] List of category pairs, each marked **Allow** or **Deny**. Rules are symmetric (Room–Hallway also covers Hallway–Room).
-- [ ] Editor validation: warn about pairs that reference categories not in the theme, and about required categories that no rule allows to connect to anything.
+- [x] `ConnectionRules` ScriptableObject referenced by the theme. Categories are inline data rather than assets, so rules name them by **title** (case-insensitive); the theme now requires unique category titles.
+- [x] Default policy: **allow unless denied** or **deny unless allowed**.
+- [x] List of category pairs, each marked **Allow** or **Deny**. Rules are symmetric (Room–Hallway also covers Hallway–Room).
+- [x] Editor validation: warn about pairs that reference categories not in the theme, and about required categories that no rule allows to connect to anything.
 
 **Applying rules**
-- [ ] When filling a doorway, filter candidates to categories allowed next to that module **before** the weighted pick, so attempts aren't wasted on modules that could never be legal there. (Alias tables need to be built per allowed set and cached, or use rejection sampling with an attempt cap.)
-- [ ] Rules also apply to secondary (loop) connections.
+- [x] When filling a doorway, filter candidates to categories allowed next to that module **before** the weighted pick, so attempts aren't wasted on modules that could never be legal there. (Alias tables need to be built per allowed set and cached, or use rejection sampling with an attempt cap.)
+- [x] Rules also apply to secondary (loop) connections.
 
 **Sequence settings (rules control what can touch, not how many)**
-- [ ] **Consecutive connectors (min/max):** how many `Connector` modules appear in a row between rooms on the main path and branches.
-- [ ] **Branches must end in a room.** If a branch's final room fails to place, remove that branch's connectors too. No dead-end hallway stubs.
-- [ ] Backtracking treats a room plus the connectors leading into it as one unit, popping them together.
+- [x] **Consecutive connectors (min/max):** how many `Connector` modules appear in a row between rooms on the main path and branches.
+- [x] **Branches must end in a room.** If a branch's final room fails to place, remove that branch's connectors too. No dead-end hallway stubs.
+- [x] Backtracking treats a room plus the connectors leading into it as one unit, popping them together.
+- [x] Connector count per unit is random within the range; if it rolls 0 but the rules deny the direct connection it becomes 1. **End attaches straight to Boss when the rules allow Boss–End** (matches the example below).
+- [x] Weighted themes also honour the rules: a module only attaches to modules its category may connect to.
 
 **Example setup:** default *allow*, deny Room–Room, Room–Boss, Room–Start; allow Boss–End directly. Result: every room is reached through hallways, and the boss exits straight into the end room.
 
@@ -120,8 +127,9 @@ Currently any module can attach to any other module, so rooms end up packed dire
 
 ### 10. Depth tracking
 
-- [ ] Store each module's depth (rooms from Start, not counting connectors) and whether it's on the main path or a branch.
-- [ ] Expose this on the placed module so game code can scale encounter difficulty by depth.
+- [x] Store each module's depth (rooms from Start, not counting connectors) and whether it's on the main path or a branch.
+- [x] Expose this on the placed module so game code can scale encounter difficulty by depth. (`DungeonModule.Depth`, `IsMainPath`, `Role`, `Category`, `ParentModule`; `DungeonGenerator.PlacedModules` and `LoopConnections` give the whole graph.)
+- [x] Batch tester checks all of the above per layout (`DungeonLayoutValidator`): rules on every connection, connector runs, no dead-end connectors, Start first, Boss → End, main path order and length, branch roots, depth consistency.
 
 **Done when:** the batch tester shows 100% of successful layouts have Start first, Boss directly before End, End as the last main-path module, and branches only off main-path modules.
 

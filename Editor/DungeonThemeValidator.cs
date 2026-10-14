@@ -31,7 +31,7 @@ namespace StarStoneStudio.DungeonGeneration.Editor
         private static void CheckRequirements()
         {
             var hasErrors = false;
-            var themeGUIDs = AssetDatabase.FindAssets("t:Theme");
+            var themeGUIDs = AssetDatabase.FindAssets($"t:{nameof(DungeonTheme)}");
 
             foreach (var themeGUID in themeGUIDs)
             {
@@ -44,9 +44,12 @@ namespace StarStoneStudio.DungeonGeneration.Editor
                 foreach (var currentInfo in fieldInfo)
                 {
                     var infoValue = currentInfo.GetValue(assetTarget);
-                    if (infoValue is Array infoArray)
+
+                    // Only plain serialized data is checked here; asset references such as connection rules are optional
+                    if (infoValue == null || infoValue is UnityEngine.Object) continue;
+
+                    if (infoValue is ModuleData[] moduleData)
                     {
-                        var moduleData = (ModuleData[])infoArray;
                         
                         foreach (var moduleElement in moduleData)
                         {

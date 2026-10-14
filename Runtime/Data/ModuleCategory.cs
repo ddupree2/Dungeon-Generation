@@ -15,6 +15,10 @@ namespace StarStoneStudio.DungeonGeneration
         [SerializeField]
         [Tooltip("The display name of the category")]
         private string categoryTitle;
+
+        [SerializeField]
+        [Tooltip("The part this category plays in a path-first layout. Ignored by weighted layouts.")]
+        private ModuleRole role;
         
         [Required(normalizeLayout: true)]
         [SerializeField]
@@ -48,6 +52,11 @@ namespace StarStoneStudio.DungeonGeneration
         /// The display name of this category.
         /// </summary>
         public string CategoryTitle => categoryTitle;
+
+        /// <summary>
+        /// The part this category plays in a <see cref="LayoutMode.PathFirst"/> layout.
+        /// </summary>
+        public ModuleRole Role => role;
         
         /// <summary>
         /// Determines whether a limit is enforced on the number of modules that may spawn from this category.
@@ -83,7 +92,9 @@ namespace StarStoneStudio.DungeonGeneration
         /// </returns>
         public bool Equals(ModuleCategory otherCategory)
         {
-            return categoryTitle == otherCategory.categoryTitle &&
+            return otherCategory is not null &&
+                   categoryTitle == otherCategory.categoryTitle &&
+                   role == otherCategory.role &&
                    spawnLimits == otherCategory.spawnLimits &&
                    spawnMaximum == otherCategory.spawnMaximum &&
                    spawnMinimum == otherCategory.spawnMinimum &&
@@ -111,7 +122,7 @@ namespace StarStoneStudio.DungeonGeneration
         /// </returns>
         public override int GetHashCode()
         {
-            return HashCode.Combine(categoryTitle, spawnLimits, spawnMaximum, spawnMinimum, spawnRequired, spawnRate);
+            return HashCode.Combine(categoryTitle, role, spawnLimits, spawnMaximum, spawnMinimum, spawnRequired, spawnRate);
         }
     }
 }

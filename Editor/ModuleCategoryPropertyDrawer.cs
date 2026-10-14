@@ -24,6 +24,7 @@ namespace StarStoneStudio.DungeonGeneration.Editor
             var containerElement = new VisualElement();
 
             var categoryTitlePropertyField = CreatePropertyField(serializedProperty, "categoryTitle");
+            var rolePropertyField = CreatePropertyField(serializedProperty, "role");
             
             var spawnRangePropertyField = new VisualElement();
             
@@ -73,6 +74,7 @@ namespace StarStoneStudio.DungeonGeneration.Editor
             });
 
             containerElement.Add(categoryTitlePropertyField);
+            containerElement.Add(rolePropertyField);
             containerElement.Add(spawnRangePropertyField);
             containerElement.Add(spawnBehaviorPropertyField);
             
