@@ -71,7 +71,7 @@ namespace StarStoneStudio.DungeonGeneration
         /// </summary>
         private void Awake()
         {
-            ConnectableEntrances = moduleEntrances.ToList();
+            ConnectableEntrances = moduleEntrances?.ToList() ?? new List<DungeonPassage>();
             
             foreach (var connectableEntrance in ConnectableEntrances)
             {
@@ -149,8 +149,8 @@ namespace StarStoneStudio.DungeonGeneration
         {
             ObjectValidator.AssertConditions(
                 this,
-                (moduleBounds.Length <= 0, $"<b>{nameof(moduleBounds)}</b> must contain at least one element."),
-                (moduleEntrances.Length <= 0, $"<b>{nameof(moduleEntrances)}</b> must contain at least one element.")
+                (moduleBounds == null || moduleBounds.Length <= 0, $"<b>{nameof(moduleBounds)}</b> must contain at least one element."),
+                (moduleEntrances == null || moduleEntrances.Length <= 0, $"<b>{nameof(moduleEntrances)}</b> must contain at least one element.")
             );
 
             WarnAboutDoorwayOrientation();

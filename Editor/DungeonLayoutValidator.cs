@@ -10,7 +10,7 @@ namespace StarStoneStudio.DungeonGeneration.Editor
     /// Checks a generated layout against the generator's rules and produces fingerprints for determinism checks.
     /// Used by <see cref="DungeonBatchTesterWindow"/>.
     /// </summary>
-    internal static class DungeonLayoutValidator
+    public static class DungeonLayoutValidator
     {
         /// <summary>
         /// Amount each bounds collider is shrunk by before testing for overlaps, so modules meeting at a doorway don't count.

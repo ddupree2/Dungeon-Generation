@@ -1,8 +1,4 @@
-using System;
-using System.Collections.Generic;
-using System.Globalization;
 using System.Linq;
-using System.Text;
 using UnityEditor;
 using UnityEngine;
 
@@ -10,7 +6,7 @@ namespace StarStoneStudio.DungeonGeneration.Editor
 {
     /// <summary>
     /// Generates many seeds in a row with a <see cref="DungeonGenerator"/> and reports success rates, failure reasons,
-    /// backtracking and timing, so generator changes can be checked before and after.
+    /// backtracking, timing and layout rule violations, so generator changes can be checked before and after.
     /// </summary>
     internal class DungeonBatchTesterWindow : EditorWindow
     {
@@ -23,19 +19,9 @@ namespace StarStoneStudio.DungeonGeneration.Editor
         [SerializeField] private bool keepLastLayout;
 
         /// <summary>
-        /// The results of the most recent batch, one per seed.
+        /// The report from the most recent batch, or <c>null</c> before the first run.
         /// </summary>
-        private List<GenerationResult> batchResults = new();
-
-        /// <summary>
-        /// Seeds that produced a different layout when generated a second time.
-        /// </summary>
-        private List<int> nondeterministicSeeds = new();
-
-        /// <summary>
-        /// Layout rule violations reported by <see cref="DungeonLayoutValidator"/>, keyed by seed.
-        /// </summary>
-        private Dictionary<int, List<string>> layoutViolations = new();
+        private DungeonBatchReport batchReport;
 
         private Vector2 scrollPosition;
 
@@ -86,7 +72,7 @@ namespace StarStoneStudio.DungeonGeneration.Editor
                 return;
             }
 
-            if (batchResults.Count <= 0) return;
+            if (batchReport == null || batchReport.Results.Count <= 0) return;
 
             scrollPosition = EditorGUILayout.BeginScrollView(scrollPosition);
             DrawSummary();
@@ -95,48 +81,14 @@ namespace StarStoneStudio.DungeonGeneration.Editor
         }
 
         /// <summary>
-        /// Generates every seed in the batch, collecting results and checking layouts.
+        /// Generates every seed in the batch with a cancelable progress bar, then logs the report.
         /// </summary>
         private void RunBatch()
         {
-            batchResults = new List<GenerationResult>(runCount);
-            nondeterministicSeeds = new List<int>();
-            layoutViolations = new Dictionary<int, List<string>>();
-
-            var seedSource = new System.Random();
-
             try
             {
-                for (var runIndex = 0; runIndex < runCount; runIndex++)
-                {
-                    var progress = (float)runIndex / runCount;
-                    if (EditorUtility.DisplayCancelableProgressBar("Dungeon Batch Tester", $"Seed {runIndex + 1} of {runCount}", progress)) break;
-
-                    var seed = startSeed != 0 ? startSeed + runIndex : seedSource.Next(1, int.MaxValue);
-                    if (seed == 0) seed = 1;
-
-                    var generationResult = targetGenerator.GenerateDungeon(seed, true);
-                    batchResults.Add(generationResult);
-
-                    if (!generationResult.Succeeded) continue;
-
-                    var violations = DungeonLayoutValidator.Validate(targetGenerator);
-                    if (0 < violations.Count)
-                    {
-                        layoutViolations[seed] = violations;
-                    }
-
-                    if (checkDeterminism)
-                    {
-                        var firstLayout = DungeonLayoutValidator.Fingerprint(targetGenerator);
-                        targetGenerator.GenerateDungeon(seed, true);
-
-                        if (firstLayout != DungeonLayoutValidator.Fingerprint(targetGenerator))
-                        {
-                            nondeterministicSeeds.Add(seed);
-                        }
-                    }
-                }
+                batchReport = DungeonBatchRunner.Run(targetGenerator, runCount, startSeed, checkDeterminism, (runIndex, totalRuns) =>
+                    EditorUtility.DisplayCancelableProgressBar("Dungeon Batch Tester", $"Seed {runIndex + 1} of {totalRuns}", (float)runIndex / totalRuns));
             }
             finally
             {
@@ -148,7 +100,7 @@ namespace StarStoneStudio.DungeonGeneration.Editor
                 }
             }
 
-            Debug.Log(BuildReport(), targetGenerator);
+            Debug.Log(batchReport.ToString(), targetGenerator);
         }
 
         /// <summary>
@@ -156,32 +108,29 @@ namespace StarStoneStudio.DungeonGeneration.Editor
         /// </summary>
         private void DrawSummary()
         {
-            var succeededCount = batchResults.Count(batchResult => batchResult.Succeeded);
-            var failedCount = batchResults.Count - succeededCount;
-
             EditorGUILayout.Space(10);
             EditorGUILayout.LabelField("Summary", EditorStyles.boldLabel);
-            EditorGUILayout.LabelField("Runs", batchResults.Count.ToString());
-            EditorGUILayout.LabelField("Succeeded", $"{succeededCount} ({Percent(succeededCount)})");
-            EditorGUILayout.LabelField("Failed", $"{failedCount} ({Percent(failedCount)})");
-            EditorGUILayout.LabelField("Layout Rule Violations", layoutViolations.Count.ToString());
+            EditorGUILayout.LabelField("Runs", batchReport.Results.Count.ToString());
+            EditorGUILayout.LabelField("Succeeded", $"{batchReport.SucceededCount} ({batchReport.Percent(batchReport.SucceededCount)})");
+            EditorGUILayout.LabelField("Failed", $"{batchReport.FailedCount} ({batchReport.Percent(batchReport.FailedCount)})");
+            EditorGUILayout.LabelField("Layout Rule Violations", batchReport.LayoutViolations.Count.ToString());
 
-            if (checkDeterminism)
+            if (batchReport.CheckedDeterminism)
             {
-                EditorGUILayout.LabelField("Nondeterministic Seeds", nondeterministicSeeds.Count.ToString());
+                EditorGUILayout.LabelField("Nondeterministic Seeds", batchReport.NondeterministicSeeds.Count.ToString());
             }
 
             EditorGUILayout.Space(5);
-            EditorGUILayout.LabelField("Backtracks (avg / max)", $"{batchResults.Average(batchResult => batchResult.BacktrackCount):0.0} / {batchResults.Max(batchResult => batchResult.BacktrackCount)}");
-            EditorGUILayout.LabelField("Time ms (avg / max)", $"{batchResults.Average(batchResult => batchResult.ElapsedMilliseconds):0.0} / {batchResults.Max(batchResult => batchResult.ElapsedMilliseconds):0.0}");
+            EditorGUILayout.LabelField("Backtracks (avg / max)", $"{batchReport.AverageBacktracks:0.0} / {batchReport.MaximumBacktracks}");
+            EditorGUILayout.LabelField("Time ms (avg / max)", $"{batchReport.AverageMilliseconds:0.0} / {batchReport.MaximumMilliseconds:0.0}");
         }
 
         /// <summary>
-        /// Draws failure reasons and the seeds that failed, each with a button to replay it.
+        /// Draws failure reasons and every seed that needs a look, each with a button to replay it.
         /// </summary>
         private void DrawFailures()
         {
-            var failedResults = batchResults.Where(batchResult => !batchResult.Succeeded).ToList();
+            var failedResults = batchReport.Results.Where(batchResult => !batchResult.Succeeded).ToList();
 
             if (0 < failedResults.Count)
             {
@@ -202,23 +151,23 @@ namespace StarStoneStudio.DungeonGeneration.Editor
                 }
             }
 
-            if (0 < layoutViolations.Count)
+            if (0 < batchReport.LayoutViolations.Count)
             {
                 EditorGUILayout.Space(10);
                 EditorGUILayout.LabelField("Layout Rule Violations", EditorStyles.boldLabel);
 
-                foreach (var (seed, violations) in layoutViolations)
+                foreach (var violationEntry in batchReport.LayoutViolations)
                 {
-                    DrawSeedRow(seed, string.Join("; ", violations));
+                    DrawSeedRow(violationEntry.Key, string.Join("; ", violationEntry.Value));
                 }
             }
 
-            if (0 < nondeterministicSeeds.Count)
+            if (0 < batchReport.NondeterministicSeeds.Count)
             {
                 EditorGUILayout.Space(10);
                 EditorGUILayout.LabelField("Nondeterministic Seeds", EditorStyles.boldLabel);
 
-                foreach (var seed in nondeterministicSeeds)
+                foreach (var seed in batchReport.NondeterministicSeeds)
                 {
                     DrawSeedRow(seed, "Layout differed on the second generation");
                 }
@@ -241,43 +190,6 @@ namespace StarStoneStudio.DungeonGeneration.Editor
                     Selection.activeGameObject = targetGenerator.gameObject;
                 }
             }
-        }
-
-        /// <summary>
-        /// Builds a plain-text report of the batch for the console, including every seed that needs a look.
-        /// </summary>
-        private string BuildReport()
-        {
-            var succeededCount = batchResults.Count(batchResult => batchResult.Succeeded);
-            var reportBuilder = new StringBuilder();
-
-            reportBuilder.AppendLine($"[Dungeon Batch Tester] {succeededCount}/{batchResults.Count} succeeded ({Percent(succeededCount)}), " +
-                                     $"{layoutViolations.Count} layout rule violations" +
-                                     (checkDeterminism ? $", {nondeterministicSeeds.Count} nondeterministic" : string.Empty));
-            reportBuilder.AppendLine($"Backtracks avg {batchResults.Average(batchResult => batchResult.BacktrackCount).ToString("0.0", CultureInfo.InvariantCulture)}, max {batchResults.Max(batchResult => batchResult.BacktrackCount)}; " +
-                                     $"time avg {batchResults.Average(batchResult => batchResult.ElapsedMilliseconds).ToString("0.0", CultureInfo.InvariantCulture)} ms, max {batchResults.Max(batchResult => batchResult.ElapsedMilliseconds).ToString("0.0", CultureInfo.InvariantCulture)} ms");
-
-            foreach (var failedResult in batchResults.Where(batchResult => !batchResult.Succeeded))
-            {
-                reportBuilder.AppendLine($"  FAILED seed {failedResult.Seed}: {failedResult.Error}");
-            }
-
-            foreach (var (seed, violations) in layoutViolations)
-            {
-                reportBuilder.AppendLine($"  RULES seed {seed}: {string.Join("; ", violations)}");
-            }
-
-            foreach (var seed in nondeterministicSeeds)
-            {
-                reportBuilder.AppendLine($"  NONDETERMINISTIC seed {seed}");
-            }
-
-            return reportBuilder.ToString();
-        }
-
-        private string Percent(int count)
-        {
-            return batchResults.Count <= 0 ? "0%" : ((float)count / batchResults.Count).ToString("0.#%", CultureInfo.InvariantCulture);
         }
     }
 }
