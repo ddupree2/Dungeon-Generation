@@ -115,11 +115,12 @@ namespace StarStoneStudio.DungeonGeneration
         /// <summary>
         /// Selects and returns a random object from the <see cref="selectionPool"/> based on the alias method tables.
         /// </summary>
+        /// <param name="random">The random source to draw from, so results are reproducible for a given seed.</param>
         /// <returns>A randomly chosen <typeparamref name="TObject"/> weighted by its probability.</returns>
-        public TObject Sample()
+        public TObject Sample(Random random)
         {
-            var randomIndex = UnityEngine.Random.Range(0, selectionPool.Length);
-            var randomValue = UnityEngine.Random.value;
+            var randomIndex = random.Next(0, selectionPool.Length);
+            var randomValue = random.NextDouble();
             
             return randomValue < probabilityTable[randomIndex] ? selectionPool[randomIndex] : selectionPool[aliasTable[randomIndex]];
         }

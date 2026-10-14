@@ -70,14 +70,15 @@ namespace StarStoneStudio.DungeonGeneration
         /// <summary>
         /// Selects an unused entrance at random from the module.
         /// </summary>
+        /// <param name="random">The random source to draw from, so results are reproducible for a given seed.</param>
         /// <returns>
         /// A <see cref="Transform"/> of the selected entrance or <c>null</c> if no entrances are available.
         /// </returns>
-        public DungeonPassage SelectConnectableEntrance()
+        public DungeonPassage SelectConnectableEntrance(System.Random random)
         {
             if (ConnectableEntrances.Count <= 0) return null;
             
-            var entranceIndex = Random.Range(0, ConnectableEntrances.Count);
+            var entranceIndex = random.Next(0, ConnectableEntrances.Count);
             return ConnectableEntrances[entranceIndex];
         }
         

@@ -59,10 +59,12 @@ Three loops can spin forever with no exit condition:
 
 ### 5. Single seeded random source
 
-- [ ] Replace every use of `UnityEngine.Random` with one `System.Random` instance created per generation and passed to everything that needs randomness.
-- [ ] This includes `AliasProbability.Sample()`, which currently calls `UnityEngine.Random.Range` and `UnityEngine.Random.value`.
-- [ ] When the seed is `0`, generate a seed, log it, and expose it (property or event) so any bad layout can be replayed exactly.
-- [ ] Stop calling `UnityEngine.Random.InitState`, which resets random state for the whole game.
+- [x] Replace every use of `UnityEngine.Random` with one `System.Random` instance created per generation and passed to everything that needs randomness.
+- [x] This includes `AliasProbability.Sample()`, which currently calls `UnityEngine.Random.Range` and `UnityEngine.Random.value`.
+- [x] When the seed is `0`, generate a seed, log it, and expose it (property or event) so any bad layout can be replayed exactly.
+- [x] Stop calling `UnityEngine.Random.InitState`, which resets random state for the whole game.
+- [x] Also covers `DungeonModule.SelectConnectableEntrance`. Results are exposed through `DungeonGenerator.LastResult` and the `GenerationCompleted` event (`GenerationResult` carries seed, error, module/backtrack counts and timing).
+- [x] Fixed: `InitializeGeneration` cleared `generationError` after required-module setup, hiding setup failures.
 
 **Done when:** the same seed and theme produce an identical layout every time, and generating a dungeon doesn't change any other system's random results.
 

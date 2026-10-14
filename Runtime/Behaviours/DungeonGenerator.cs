@@ -22,7 +22,7 @@ namespace StarStoneStudio.DungeonGeneration
         private const float RequiredChance = 0.5f;
 
         [SerializeField]
-        [Tooltip("The seed used to initialize the random number generation, ensuring reproducible generation results.")]
+        [Tooltip("The seed used to initialize the random number generation, ensuring reproducible generation results. Use 0 for a random seed.")]
         private int generationSeed;
         
         [SerializableDictionary("Theme", "Occurrence Rate")]
@@ -47,6 +47,11 @@ namespace StarStoneStudio.DungeonGeneration
         [Tooltip("Called when generation has completed without error.")]
         private UnityEvent onGenerationSuccess;
         
+        /// <summary>
+        /// The random source for the current generation pass. Every random decision draws from it so a seed always reproduces the same layout.
+        /// </summary>
+        private System.Random randomSource;
+
         /// <summary>
         /// The currently selected <see cref="DungeonTheme"/> for generation.
         /// </summary>
@@ -118,13 +123,15 @@ namespace StarStoneStudio.DungeonGeneration
         private GenerationError generationError;
 
         /// <summary>
-        /// Ensures <see cref="DungeonTheme"/> probabilities are initialized before use.
+        /// The outcome of the most recent generation pass, including the seed needed to replay it.
         /// </summary>
-        private void Awake()
-        {
-            InitializeThemes();
-        }
-        
+        public GenerationResult LastResult { get; private set; }
+
+        /// <summary>
+        /// Raised after every non-silent generation pass, whether it succeeded or failed.
+        /// </summary>
+        public event Action<GenerationResult> GenerationCompleted;
+
         /// <summary>
         /// Creates the <see cref="AliasProbability{TObject}"/> table from the current theme weights provided by <see cref="possibleThemes"/>.
         /// </summary>
@@ -143,12 +150,27 @@ namespace StarStoneStudio.DungeonGeneration
         /// <item><description>Setting up probability tables for the weighted category and module selection</description></item>
         /// <item><description>Spawning modules until the target count is reached, respecting required category constraints</description></item>
         /// </list>
+        /// Uses the serialized seed, or a new random seed when it is <c>0</c>.
         /// </summary>
         public void GenerateDungeon()
         {
+            GenerateDungeon(generationSeed);
+        }
+
+        /// <summary>
+        /// Generates a dungeon from a specific seed. The same seed and themes always produce the same layout.
+        /// </summary>
+        /// <param name="seed">The seed to generate from, or <c>0</c> to pick a new random seed.</param>
+        /// <param name="silent">If <c>true</c>, skips logging and the generation callbacks (used by batch testing).</param>
+        /// <returns>The <see cref="GenerationResult"/> describing the outcome, including the seed that was used.</returns>
+        public GenerationResult GenerateDungeon(int seed, bool silent = false)
+        {
+            var generationTimer = System.Diagnostics.Stopwatch.StartNew();
+            var resolvedSeed = seed != 0 ? seed : CreateSeed();
+
             // Clear the current generation iteration (if any) and reset the parameters used by the generator
             ResetEnvironment();
-            InitializeGeneration();
+            InitializeGeneration(resolvedSeed);
 
             // Every loop below is capped so an unsatisfiable theme fails with an error instead of freezing the editor
             var iterationCount = 0;
@@ -179,7 +201,7 @@ namespace StarStoneStudio.DungeonGeneration
                 {
                     var requiredUrgency = Mathf.Clamp01((float)requiredModules.Count / openSlots);
                     var requiredChance = Mathf.Lerp(RequiredChance, 1f, requiredUrgency);
-                    var randomChance = UnityEngine.Random.value;
+                    var randomChance = randomSource.NextDouble();
 
                     if (randomChance <= requiredChance)
                     {
@@ -194,13 +216,13 @@ namespace StarStoneStudio.DungeonGeneration
                     break;
                 }
 
-                var chosenCategory = categoryProbabilities.Sample();
+                var chosenCategory = categoryProbabilities.Sample(randomSource);
                 if (chosenCategory.SpawnLimits)
                 {
                     if (chosenCategory.SpawnMaximum <= categorizedModules[chosenCategory]) continue;
 
                     var categoryCount = 0;
-                    var categoryLimit = UnityEngine.Random.Range(chosenCategory.SpawnMinimum, chosenCategory.SpawnMaximum + 1);
+                    var categoryLimit = NextInRange(chosenCategory.SpawnMinimum, chosenCategory.SpawnMaximum + 1);
 
                     if (openSlots < categoryLimit)
                     {
@@ -237,68 +259,95 @@ namespace StarStoneStudio.DungeonGeneration
             // Disable any remaining open entrances
             foreach (var connectableModule in connectableModules)
             {
-                connectableModule.ToggleConnectableEntrances(false);                
+                connectableModule.ToggleConnectableEntrances(false);
             }
-            
+
+            if (generationError == GenerationError.None && moduleCount < moduleLimit)
+            {
+                generationError = GenerationError.UnknownError;
+            }
+
+            generationTimer.Stop();
+            LastResult = new GenerationResult(
+                resolvedSeed,
+                generationError,
+                selectedTheme != null ? selectedTheme.ThemeTitle : null,
+                moduleCount,
+                moduleLimit,
+                backtrackAttempts,
+                generationTimer.Elapsed.TotalMilliseconds
+            );
+
+            if (silent) return LastResult;
+
             #if UNITY_EDITOR
 
-            if (generationError != GenerationError.None)
+            if (LastResult.Succeeded)
             {
-                var errorMessage = generationError switch
-                {
-                    GenerationError.InsufficientSpace => "Insufficient space for module placement.",
-                    GenerationError.InsufficientRequiredSpace => "Insufficient space to place all required modules.",
-                    GenerationError.InvalidHistory => "No generation history available for backtracking.",
-                    GenerationError.InvalidBacktracking => "Backtracking limit exceeded.",
-                    GenerationError.IterationLimitExceeded => "Generation loop limit exceeded. Optional categories may be capped below the module count.",
-                    GenerationError.CategoryPlacementFailed => "Could not place enough modules for a spawn-limited category.",
-                    GenerationError.RequiredSamplingFailed => "Could not reserve enough modules for a required category. It may not have enough spawn-once modules.",
-                    GenerationError.NoOptionalCategories => "The theme has no optional categories to fill the remaining module slots.",
-                    _ => "Unknown Error"
-                };
-                
-                Debug.LogError($"[{name}] Generation Failed: {errorMessage}");
+                Debug.Log($"<color=green>[{name}] <b>Dungeon Generation Complete: {moduleLimit}</b> (seed {resolvedSeed})</color>", gameObject);
             }
             else
             {
-                Debug.Log($"<color=green>[{name}] <b>Dungeon Generation Complete: {moduleLimit}</b></color>");
+                Debug.LogError($"[{name}] Generation Failed (seed {resolvedSeed}): {GenerationResult.Describe(generationError)}", gameObject);
             }
 
             #endif
-            
-            var generationFailed = generationError != GenerationError.None || moduleCount < moduleLimit;
-            if (generationFailed)
-            {
-                onGenerationFailed.Invoke();
-            }
-            else
+
+            if (LastResult.Succeeded)
             {
                 onGenerationSuccess.Invoke();
             }
+            else
+            {
+                onGenerationFailed.Invoke();
+            }
+
+            GenerationCompleted?.Invoke(LastResult);
+            return LastResult;
         }
-        
+
+        /// <summary>
+        /// Creates a new non-zero seed for generation passes that don't specify one.
+        /// </summary>
+        /// <returns>A random seed that is never <c>0</c>.</returns>
+        private static int CreateSeed()
+        {
+            // Avoid System.Random's default time-based seeding, which repeats for calls in quick succession
+            var newSeed = Guid.NewGuid().GetHashCode();
+            return newSeed != 0 ? newSeed : 1;
+        }
+
+        /// <summary>
+        /// Returns a random integer in <c>[minimum, maximumExclusive)</c>, or <paramref name="minimum"/> if the range is empty.
+        /// </summary>
+        /// <param name="minimum">The inclusive lower bound.</param>
+        /// <param name="maximumExclusive">The exclusive upper bound.</param>
+        /// <returns>A random integer within the range.</returns>
+        private int NextInRange(int minimum, int maximumExclusive)
+        {
+            return maximumExclusive <= minimum ? minimum : randomSource.Next(minimum, maximumExclusive);
+        }
+
         /// <summary>
         /// Initializes all data structures, probability tables, and variables required to begin generation.
         /// </summary>
         /// <remarks>
         /// It must be called before any generation logic to ensure all dependencies are properly initialized and cleared.
         /// </remarks>
-        private void InitializeGeneration()
+        /// <param name="seed">The seed for this generation pass.</param>
+        private void InitializeGeneration(int seed)
         {
-            if (generationSeed != 0)
-            {
-                UnityEngine.Random.InitState(generationSeed);
-            }
-            
-            if (themeProbabilities == null)
-            {
-                InitializeThemes();
-            }
-            
-            selectedTheme = themeProbabilities.Sample();
-            
+            // Reset the error first so failures raised during initialization aren't cleared
+            generationError = GenerationError.None;
+            randomSource = new System.Random(seed);
+
+            // Rebuilt every pass so edits to the theme weights apply without re-entering Play Mode
+            InitializeThemes();
+
+            selectedTheme = themeProbabilities.Sample(randomSource);
+
             moduleCount = 0;
-            moduleLimit = UnityEngine.Random.Range(selectedTheme.MinimumModules, selectedTheme.MaximumModules + 1);
+            moduleLimit = NextInRange(selectedTheme.MinimumModules, selectedTheme.MaximumModules + 1);
             moduleHistory = new Stack<HistoryEntry>();
             connectableModules = new List<DungeonModule>();
             
@@ -318,7 +367,6 @@ namespace StarStoneStudio.DungeonGeneration
             // Reset backtracking counters and limits before starting generation
             backtrackAttempts = 0;
             backtrackLimit = moduleLimit * PlacementLimit;
-            generationError = GenerationError.None;
         }
 
         /// <summary>
@@ -389,7 +437,7 @@ namespace StarStoneStudio.DungeonGeneration
                 if (moduleCategory.SpawnLimits)
                 {
                     var spawnCount = 0;
-                    var spawnLimit = UnityEngine.Random.Range(moduleCategory.SpawnMinimum, moduleCategory.SpawnMaximum + 1);
+                    var spawnLimit = NextInRange(moduleCategory.SpawnMinimum, moduleCategory.SpawnMaximum + 1);
 
                     if (openSlots < spawnLimit)
                     {
@@ -494,7 +542,7 @@ namespace StarStoneStudio.DungeonGeneration
             var pendingModules = requiredModules.Where(requiredPair => 0 < requiredPair.Value).ToList();
             if (pendingModules.Count <= 0) return null;
 
-            var targetIndex = UnityEngine.Random.Range(0, pendingModules.Count);
+            var targetIndex = randomSource.Next(0, pendingModules.Count);
             return pendingModules[targetIndex].Key;
         }
 
@@ -510,7 +558,7 @@ namespace StarStoneStudio.DungeonGeneration
         /// </remarks>
         private ModuleAsset SampleWeightedModule(ModuleCategory moduleCategory)
         {
-            var chosenModule = moduleProbabilities[moduleCategory].Sample();
+            var chosenModule = moduleProbabilities[moduleCategory].Sample(randomSource);
             if (chosenModule.SpawnOnce && uniqueModules.Contains(chosenModule)) return null;
 
             return chosenModule;
@@ -561,7 +609,7 @@ namespace StarStoneStudio.DungeonGeneration
             var moduleInstance = Instantiate(moduleAsset.ModulePrefab, transform);
 
             var instantiatedModule = moduleInstance.GetComponent<DungeonModule>();
-            var instantiatedEntrance = instantiatedModule.SelectConnectableEntrance();
+            var instantiatedEntrance = instantiatedModule.SelectConnectableEntrance(randomSource);
 
             if (connectableModules.Count <= 0)
             {
@@ -571,8 +619,8 @@ namespace StarStoneStudio.DungeonGeneration
                 return true;
             }
 
-            var connectedModule = connectableModules[UnityEngine.Random.Range(0, connectableModules.Count)];
-            var connectedEntrance = connectedModule.SelectConnectableEntrance();
+            var connectedModule = connectableModules[randomSource.Next(0, connectableModules.Count)];
+            var connectedEntrance = connectedModule.SelectConnectableEntrance(randomSource);
 
             AlignModules(moduleInstance.transform, instantiatedEntrance.EntrancePoint, connectedEntrance.EntrancePoint);
 
@@ -867,23 +915,6 @@ namespace StarStoneStudio.DungeonGeneration
             }
         }
         
-        /// <summary>
-        /// Represents the possible errors that can occur during dungeon generation.
-        /// </summary>
-        private enum GenerationError
-        {
-            None = 0,
-            InsufficientSpace = 101,
-            InsufficientRequiredSpace = 201,
-            InvalidHistory = 301,
-            InvalidBacktracking = 302,
-            IterationLimitExceeded = 401,
-            CategoryPlacementFailed = 402,
-            RequiredSamplingFailed = 403,
-            NoOptionalCategories = 404,
-            UnknownError = 999
-        }
-
         /// <summary>
         /// Represents a single step in the history for the <see cref="DungeonGenerator"/> used for backtracking or undoing module placements.
         /// </summary>
