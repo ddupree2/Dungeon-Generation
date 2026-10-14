@@ -70,9 +70,10 @@ Three loops can spin forever with no exit condition:
 
 ### 6. Batch tester
 
-- [ ] Editor button or window that generates N seeds (default 200) in a row.
-- [ ] Reports: success/failure count, failure reasons, backtrack count (average and max), and time per layout.
-- [ ] Logs the seeds of failures so they can be replayed.
+- [x] Editor button or window that generates N seeds (default 200) in a row. (`Tools > Dungeon Generation > Batch Tester`, or "Open Batch Tester" on the generator inspector)
+- [x] Reports: success/failure count, failure reasons, backtrack count (average and max), and time per layout.
+- [x] Logs the seeds of failures so they can be replayed (console report + Replay buttons).
+- [x] Optional determinism check (generates each seed twice and compares layout fingerprints) and layout rule checks via `DungeonLayoutValidator` (module count, bounds overlaps; Tier 3 adds structure checks).
 
 ---
 

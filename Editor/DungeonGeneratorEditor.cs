@@ -144,13 +144,15 @@ namespace StarStoneStudio.DungeonGeneration.Editor
             var generateDungeonButton = InvokeButton("Generate Dungeon", activeObject.GenerateDungeon);
             var generateNavMeshButton = InvokeButton("Generate NavMesh", activeObject.GenerateNavMesh);
             var destroyButton = InvokeButton("Reset Environment", activeObject.ResetEnvironment);
-            
+            var batchTestButton = InvokeButton("Open Batch Tester", () => DungeonBatchTesterWindow.Open(activeObject));
+
             generateContainer.Add(generateDungeonButton);
             generateContainer.Add(generateNavMeshButton);
-            
+
             editorUtilities.Add(HeaderLabel("Editor Utilities"));
             editorUtilities.Add(generateContainer);
             editorUtilities.Add(destroyButton);
+            editorUtilities.Add(batchTestButton);
             
             return editorUtilities;
         }
