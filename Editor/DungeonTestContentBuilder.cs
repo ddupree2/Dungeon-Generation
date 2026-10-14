@@ -237,6 +237,7 @@ namespace StarStoneStudio.DungeonGeneration.Editor
                 var boundsCollider = boundsObject.AddComponent<BoxCollider>();
                 boundsCollider.center = new Vector3(0f, WallHeight / 2f, 0f);
                 boundsCollider.size = new Vector3(moduleSpec.Width - BoundsInset * 2f, WallHeight, moduleSpec.Depth - BoundsInset * 2f);
+                boundsCollider.isTrigger = true;
 
                 var doorways = moduleSpec.Doorways
                     .Select(doorwaySide => CreateDoorway(moduleRoot.transform, moduleSpec, doorwaySide, closedMaterial))

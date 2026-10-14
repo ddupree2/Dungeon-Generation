@@ -821,7 +821,8 @@ namespace StarStoneStudio.DungeonGeneration
         {
             foreach (var moduleBounds in targetModule.ModuleBounds)
             {
-                var hitContacts = Physics.OverlapBox(moduleBounds.bounds.center, moduleBounds.bounds.extents, Quaternion.identity, placementLayers);
+                // Bounds are often triggers; collide with them regardless of the project's "Queries Hit Triggers" setting
+                var hitContacts = Physics.OverlapBox(moduleBounds.bounds.center, moduleBounds.bounds.extents, Quaternion.identity, placementLayers, QueryTriggerInteraction.Collide);
                 
                 foreach (var hitContact in hitContacts)
                 {
@@ -873,11 +874,11 @@ namespace StarStoneStudio.DungeonGeneration
         /// <returns>
         /// A <see cref="DungeonPassage"/> representing the connectable entrance on another <see cref="DungeonModule"/>.
         /// </returns>
-        private static DungeonPassage DetectConnectableEntrance(DungeonPassage originEntrance)
+        private DungeonPassage DetectConnectableEntrance(DungeonPassage originEntrance)
         {
             var raycastModule = new Ray(originEntrance.EntrancePoint.position, originEntrance.EntrancePoint.forward);
 
-            if (Physics.Raycast(raycastModule, out var raycastHit, 0.05f))
+            if (Physics.Raycast(raycastModule, out var raycastHit, 0.05f, placementLayers, QueryTriggerInteraction.Collide))
             {
                 var hitModule = raycastHit.collider.GetComponentInParent<DungeonModule>();
                 if (hitModule == null || hitModule == originEntrance.DungeonModule) return null;

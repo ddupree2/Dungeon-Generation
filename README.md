@@ -86,7 +86,7 @@ Room_Square                ← DungeonModule
 └── Doorway_South …
 ```
 
-1. **Bounds.** Add one or more colliders that cover the room's footprint and assign them to **Module Bounds**. Make them slightly smaller than the real footprint (a few centimetres on each side) so two rooms meeting at a doorway don't count as overlapping. Put them on a dedicated layer (for example `DungeonBounds`) that is included in the generator's **Placement Layers** and doesn't collide with the player or enemies.
+1. **Bounds.** Add one or more colliders that cover the room's footprint and assign them to **Module Bounds**. Make them slightly smaller than the real footprint (a few centimetres on each side) so two rooms meeting at a doorway don't count as overlapping. Make them **triggers** (recommended): the generator always detects trigger bounds, the player and enemies walk through them, and they double as room volumes (for example, a minimap script on the bounds object can reveal the room in `OnTriggerEnter`). Put them on a layer that is included in the generator's **Placement Layers** and that nothing else in the dungeon area uses (for example `DungeonBounds`). Non-trigger bounds also work, but then you need the collision matrix to stop them blocking the player.
 2. **Doorways.** For each doorway, add an empty transform exactly on the edge of the footprint, rotated so its **forward (blue) axis points out of the room**. Rotate doorways in 90° steps around Y only: the overlap check uses axis-aligned bounds. Add it to **Module Entrances** with its **Entrance Point**, **Open State** and **Closed State** objects.
 3. **Doorway sizes must match.** Any doorway can connect to any other, so keep doorway widths consistent across all rooms in a theme.
 4. **Enough doorways.**
